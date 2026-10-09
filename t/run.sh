@@ -63,8 +63,9 @@ fi
 # How many of each this binary is expected to get right. Asserted, not
 # reported: a decoder that regresses to 100 has to fail the suite, and a
 # decoder that improves has to come here and say so.
-GOT_VALID=$WANT_VALID
+GOT_VALID=99    # palette is not implemented, so 63 files do not render yet
 GOT_CORRUPT=14  # every x*.png is now caught
+GOT_PIX=94      # and five of those 99 carry a tRNS chunk we ignore
 
 # ------------------------------------------------- 1. the corpus, scored
 nvalid=0
@@ -83,8 +84,16 @@ for f in "$S"/*.png; do
 			bad "$b: rejected but wrote $(wc -c < "$D/out") bytes to stdout"
 		fi
 		;;
-	*)	if [ "$rc" = 0 ]; then nvalid=$((nvalid+1))
-		else bad "$b: valid file rejected ($(cat "$D/err"))"; fi
+	*)	if [ "$rc" = 0 ]; then
+			nvalid=$((nvalid+1))
+		elif [ "$GOT_VALID" = "$WANT_VALID" ]; then
+			bad "$b: valid file rejected ($(cat "$D/err"))"
+		else
+			# Still building up. The count below is the assertion; naming
+			# every not-yet-implemented file as a failure would bury the
+			# ones that are real.
+			printf 'note: %s not decoded yet (%s)\n' "$b" "$(cat "$D/err")"
+		fi
 		;;
 	esac
 done
@@ -112,8 +121,10 @@ for f in "$S"/*.png; do
 		bad "inflate: $(basename "$f") differs from python zlib"
 	}
 done
-if [ "$zbad" = 0 ] && [ "$zn" = "$GOT_VALID" ]; then ok
-else bad "inflate vs python zlib: $zn compared ($GOT_VALID expected), $zbad bad"; fi
+# Every valid file, regardless of how much of the pixel pipeline exists yet:
+# -z stops before the filters, so this count is WANT_VALID and not GOT_VALID.
+if [ "$zbad" = 0 ] && [ "$zn" = "$WANT_VALID" ]; then ok
+else bad "inflate vs zlib: $zn compared, want $WANT_VALID; $zbad differ"; fi
 
 # Our chunk CRC-32 against zlib.crc32. If these disagreed, the whole
 # accept/reject score above would be measuring the wrong thing.
@@ -146,7 +157,57 @@ done
 if [ "$nfilt" = 50 ]; then ok
 else bad "filter fixtures: $nfilt of 50 matched"; fi
 
-# ------------------------------- 4. hostile headers must not be believed
+# ----------------------------------- 4. libpng decides what the pixels are
+# The real oracle. gdk-pixbuf-thumbnailer is libpng, and asking it for a
+# thumbnail at the image's own size gives back the same pixels written out as
+# a plain 8-bit non-interlaced PNG. Decoding that and comparing tests every
+# hard path -- 1/2/4-bit packing, 16-bit big-endian samples, palettes, tRNS,
+# Adam7 -- against an implementation written by other people.
+#
+# The simple path it routes through is not taken on trust: it is the same path
+# the forward-filter fixtures above pin byte for byte, and its inflate output
+# is already compared against Python's zlib.
+#
+# Dimensions come from oracle.py reading IHDR, not from us, because -s must be
+# the image's own longest side: gdk-pixbuf scales DOWN to fit but will happily
+# scale UP past it.
+npix=0
+nskip=0
+if command -v gdk-pixbuf-thumbnailer > /dev/null; then
+	for f in "$S"/*.png; do
+		b=$(basename "$f" .png)
+		case $b in x*) continue ;; esac
+		"$IN" "$f" > "$D/ours.pam" 2>/dev/null || {
+			nskip=$((nskip+1))
+			continue
+		}
+		set -- $(python3 "$R/t/oracle.py" dims "$f")
+		side=$1
+		[ "$2" -gt "$side" ] && side=$2
+		gdk-pixbuf-thumbnailer -s "$side" "$f" "$D/ref.png" 2>/dev/null || {
+			bad "$b: libpng refused a file we accepted"
+			continue
+		}
+		"$IN" "$D/ref.png" > "$D/theirs.pam" 2>"$D/err" || {
+			bad "$b: cannot decode libpng's own output: $(cat "$D/err")"
+			continue
+		}
+		msg=$(python3 "$R/t/oracle.py" cmp8 "$D/ours.pam" "$D/theirs.pam")
+		if [ $? = 0 ]; then
+			npix=$((npix+1))
+		elif [ "$GOT_PIX" = "$WANT_VALID" ]; then
+			bad "$b: disagrees with libpng: $msg"
+		else
+			printf 'note: %s disagrees with libpng: %s\n' "$b" "$msg"
+		fi
+	done
+	if [ "$npix" = "$GOT_PIX" ]; then ok
+	else bad "libpng agreed on $npix files, expected $GOT_PIX"; fi
+else
+	bad "gdk-pixbuf-thumbnailer missing: the pixel oracle did not run"
+fi
+
+# ------------------------------- 5. hostile headers must not be believed
 # Width x height x bytes-per-pixel is the classic image-decoder overflow, and
 # a crafted IHDR is the whole attack: correct signature, correct CRCs, and
 # dimensions whose product does not fit the machine. These assert the exact

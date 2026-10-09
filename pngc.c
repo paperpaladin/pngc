@@ -583,6 +583,135 @@ static const char *unfilter_all(const Png *im, const Buf *raw, Buf *out) {
 	return NULL;
 }
 
+
+/* -------------------------------------------------------- pixel output */
+
+/* Extract sample j of a scanline. Three cases, and the middle one is the only
+ * one most decoders get tested on:
+ *
+ *   depth 16: big-endian, clause 7.1. Network byte order, not the machine's.
+ *   depth 8:  one byte.
+ *   depth 1, 2, 4: packed left to right, most significant bits first, so the
+ *             last byte of a scanline can be partially unused -- and those
+ *             spare low bits are not required to be zero, so they must be
+ *             masked off rather than trusted.
+ */
+static unsigned getsample(const uint8_t *row, size_t j, int depth) {
+	if (depth == 16) return (unsigned)row[2 * j] << 8 | row[2 * j + 1];
+	if (depth == 8) return row[j];
+	size_t per = (size_t)(8 / depth);
+	unsigned shift = (unsigned)(8 - depth) - (unsigned)(j % per) * (unsigned)depth;
+	return (row[j / per] >> shift) & ((1u << depth) - 1u);
+}
+
+/* Scale a sample to 8 bits the way the spec's "sample depth scaling" does:
+ * v * 255 / max, which for depths 1, 2 and 4 is exactly bit replication
+ * (x255, x85, x17) and is what libpng's expand produces. */
+static unsigned to8(unsigned v, int depth) {
+	return depth == 8 ? v : v * 255u / ((1u << depth) - 1u);
+}
+
+/* Bytes of RGBA output, guarded. This is bigger than the packed input, by up
+ * to 32x for 1-bit greyscale, so it needs its own ceiling rather than
+ * inheriting the one on the packed size. */
+static const char *out_bytes(const Png *im, uint64_t *out) {
+	uint64_t per = 4 * (im->depth == 16 ? 2u : 1u);
+	uint64_t px = (uint64_t)im->w * im->h;	/* under 2^62, cannot wrap */
+	if (px > UINT64_MAX / per) return "RGBA size overflows 64 bits";
+	uint64_t n = px * per;
+	if (n > MAXPIX || n > SIZE_MAX)
+		return "RGBA image larger than the 1 GiB limit";
+	*out = n;
+	return NULL;
+}
+
+/* One pixel of the source, as RGBA at the source's own sample depth. */
+static void topixel(const Png *im, const uint8_t *row, size_t k,
+                    unsigned px[4]) {
+	unsigned full = (1u << im->depth) - 1u;
+	switch (im->colour) {
+	case 3:
+		/* Palette lookup lands in the next commit. Until then say so rather
+		 * than fall through into the truecolour case, which would read four
+		 * samples out of a one-sample-per-pixel scanline. */
+		px[0] = px[1] = px[2] = 0;
+		px[3] = full;
+		break;
+	case 0:
+		px[0] = px[1] = px[2] = getsample(row, k, im->depth);
+		px[3] = full;
+		break;
+	case 2:
+		px[0] = getsample(row, k * 3 + 0, im->depth);
+		px[1] = getsample(row, k * 3 + 1, im->depth);
+		px[2] = getsample(row, k * 3 + 2, im->depth);
+		px[3] = full;
+		break;
+	case 4:
+		px[0] = px[1] = px[2] = getsample(row, k * 2 + 0, im->depth);
+		px[3] = getsample(row, k * 2 + 1, im->depth);
+		break;
+	default: /* 6 */
+		px[0] = getsample(row, k * 4 + 0, im->depth);
+		px[1] = getsample(row, k * 4 + 1, im->depth);
+		px[2] = getsample(row, k * 4 + 2, im->depth);
+		px[3] = getsample(row, k * 4 + 3, im->depth);
+		break;
+	}
+}
+
+/* Walk the unfiltered pass images and place every pixel at its final
+ * position. For a non-interlaced image there is one pass and the placement is
+ * the identity; for Adam7 the seven passes each land on their own lattice,
+ * which is the only reason this is not a memcpy. */
+static const char *render(const Png *im, const Buf *img, uint8_t *out) {
+	if (im->colour == 3) return "palette images are not implemented yet";
+	int wide = im->depth == 16;
+	size_t per = wide ? 8 : 4;
+	size_t off = 0;
+	int lo = im->interlace ? 0 : 6;
+
+	for (int p = lo; p < 7; p++) {
+		uint32_t x0 = 0, y0 = 0, xs = 1, ys = 1, pw = im->w, ph = im->h;
+		if (im->interlace) {
+			x0 = A7X0[p]; y0 = A7Y0[p]; xs = A7XS[p]; ys = A7YS[p];
+			pw = passdim(im->w, x0, xs);
+			ph = passdim(im->h, y0, ys);
+		}
+		if (!pw || !ph) continue;
+		size_t rb = (size_t)rowbytes(pw, im->depth, im->chans);
+		for (uint32_t y = 0; y < ph; y++) {
+			const uint8_t *row = img->p + off + (size_t)y * rb;
+			uint8_t *dst = out + ((size_t)(y0 + y * ys) * im->w) * per;
+			for (uint32_t k = 0; k < pw; k++) {
+				unsigned px[4];
+				topixel(im, row, k, px);
+				uint8_t *q = dst + (size_t)(x0 + k * xs) * per;
+				for (int ch = 0; ch < 4; ch++) {
+					if (wide) {
+						q[2 * ch] = (uint8_t)(px[ch] >> 8);
+						q[2 * ch + 1] = (uint8_t)px[ch];
+					} else {
+						q[ch] = (uint8_t)to8(px[ch], im->depth);
+					}
+				}
+			}
+		}
+		off += rb * (size_t)ph;
+	}
+	return NULL;
+}
+
+/* PAM (netpbm P7), because it is the only one of the netpbm formats that can
+ * carry four channels and 16-bit samples, which is what PNG can carry. Its
+ * sample order is big-endian, same as PNG's. */
+static void writepam(const Png *im, const uint8_t *out, size_t n) {
+	printf("P7\nWIDTH %u\nHEIGHT %u\nDEPTH 4\nMAXVAL %u\n"
+	       "TUPLTYPE RGB_ALPHA\nENDHDR\n",
+	       im->w, im->h, im->depth == 16 ? 65535u : 255u);
+	if (n && fwrite(out, 1, n, stdout) != n) die("write error");
+}
+
 /* -------------------------------------------------------------------- io */
 
 static Buf slurp(const char *path) {
@@ -618,6 +747,7 @@ int main(int argc, char **argv) {
 	memset(&im, 0, sizeof im);
 	Buf raw = {0, 0, 0};
 	uint64_t want = 0, npix = 0;
+	(void)npix;
 	const char *e = walk(in.p, in.n, &im);
 	if (!e) e = expected_raw(&im, &want);
 	if (!e) e = image_bytes(&im, &npix);
@@ -653,10 +783,23 @@ int main(int argc, char **argv) {
 		if (raw.n && fwrite(raw.p, 1, raw.n, stdout) != raw.n)
 			die("write error");
 	} else {
-		printf("ok %ux%u depth %d colour %d interlace %d, "
-		       "%zu raw bytes, %llu pixel bytes\n",
-		       im.w, im.h, im.depth, im.colour, im.interlace, raw.n,
-		       (unsigned long long)npix);
+		uint64_t nout = 0;
+		e = out_bytes(&im, &nout);
+		if (!e) e = unfilter_all(&im, &raw, &img);
+		uint8_t *rgba = NULL;
+		if (!e) {
+			rgba = calloc((size_t)nout, 1);
+			if (!rgba) die("out of memory");
+			e = render(&im, &img, rgba);
+		}
+		if (e) {
+			fprintf(stderr, "pngc: %s\n", e);
+			free(in.p); free(im.idat.p); free(raw.p); free(img.p);
+			free(rgba);
+			return 1;
+		}
+		writepam(&im, rgba, (size_t)nout);
+		free(rgba);
 	}
 	free(in.p);
 	free(im.idat.p);

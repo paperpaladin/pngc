@@ -11,6 +11,8 @@ cancel out: it would show up as a mismatch.
 	crc FILE        print "type length crc-ok" per chunk, zlib.crc32 as judge
 	mkfilt DIR      write filter/bit-depth fixtures and their expected pixels
 	mkbad DIR       write hostile files: huge IHDR dimensions, wrong lengths
+	dims FILE       print "W H" straight out of IHDR
+	cmp8 A B        compare two PAM files, truncating 16-bit samples to 8
 """
 import os
 import random
@@ -45,6 +47,54 @@ def cmd_crc(path):
         print(t.decode("latin1"), len(body), "ok" if ok else "BAD")
 
 
+def cmd_dims(path):
+    for t, body, _ in chunks(path):
+        if t == b"IHDR":
+            w, h = struct.unpack(">II", body[:8])
+            print(w, h)
+            return
+    sys.exit("no IHDR in %s" % path)
+
+
+def readpam(path):
+    d = open(path, "rb").read()
+    i = d.index(b"ENDHDR\n") + 7
+    hdr = dict(l.split()[:2] for l in d[:i].split(b"\n") if b" " in l)
+    return (int(hdr[b"WIDTH"]), int(hdr[b"HEIGHT"]), int(hdr[b"MAXVAL"]),
+            int(hdr[b"DEPTH"]), d[i:])
+
+
+def fail(msg):
+    print(msg)
+    sys.exit(1)
+
+
+def cmd_cmp8(a, b):
+    """Compare our decode against libpng's, at 8 bits per sample.
+
+    libpng's 16 -> 8 reduction, as gdk-pixbuf asks for it, is png_set_strip_16:
+    keep the high byte, no rounding. Measured, not assumed -- rounding instead
+    disagrees with libpng on every 16-bit file in PngSuite."""
+    wa, ha, mva, da, pa = readpam(a)
+    wb, hb, mvb, db, pb = readpam(b)
+    if (wa, ha) != (wb, hb):
+        fail("size %dx%d vs %dx%d" % (wa, ha, wb, hb))
+    if da != 4 or db != 4:
+        fail("expected 4 channels")
+    if mva == 65535:
+        pa = pa[0::2]
+    if mvb == 65535:
+        pb = pb[0::2]
+    if len(pa) != wa * ha * 4 or len(pb) != len(pa):
+        fail("payload %d vs %d, want %d"
+             % (len(pa), len(pb), wa * ha * 4))
+    nd = sum(1 for i in range(len(pa)) if pa[i] != pb[i])
+    if nd:
+        i = next(i for i in range(len(pa)) if pa[i] != pb[i])
+        fail("%d of %d samples differ, first at %d: %d vs %d"
+             % (nd, len(pa), i, pa[i], pb[i]))
+
+
 def png(path, w, h, depth, colour, rows, plte=None, trns=None, interlace=0):
     """rows is a list of (filter, scanline-bytes) already in file order."""
     out = bytearray(SIG)
@@ -54,7 +104,8 @@ def png(path, w, h, depth, colour, rows, plte=None, trns=None, interlace=0):
         out.extend(t + body)
         out.extend(struct.pack(">I", zlib.crc32(t + body) & 0xFFFFFFFF))
 
-    chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, depth, colour, 0, 0, interlace))
+    chunk(b"IHDR",
+          struct.pack(">IIBBBBB", w, h, depth, colour, 0, 0, interlace))
     if plte:
         chunk(b"PLTE", plte)
     if trns is not None:
@@ -183,5 +234,5 @@ def cmd_mkbad(d):
 
 if __name__ == "__main__":
     {"idat": cmd_idat, "crc": cmd_crc, "mkfilt": cmd_mkfilt,
-     "mkbad": cmd_mkbad}[sys.argv[1]](
+     "mkbad": cmd_mkbad, "dims": cmd_dims, "cmp8": cmd_cmp8}[sys.argv[1]](
         *sys.argv[2:])
