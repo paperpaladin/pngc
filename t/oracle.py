@@ -10,6 +10,7 @@ cancel out: it would show up as a mismatch.
 	idat FILE       inflate the concatenated IDAT of FILE to stdout
 	crc FILE        print "type length crc-ok" per chunk, zlib.crc32 as judge
 	mkfilt DIR      write filter/bit-depth fixtures and their expected pixels
+	mkbad DIR       write hostile files: huge IHDR dimensions, wrong lengths
 """
 import os
 import random
@@ -128,6 +129,42 @@ def cmd_mkfilt(d):
     print("\n".join(index))
 
 
+def cmd_mkbad(d):
+    """Files a decoder has to refuse without crashing. Every one of these has
+    a correct signature and correct CRCs, so nothing upstream of the header
+    arithmetic can catch them -- which is the point."""
+    os.makedirs(d, exist_ok=True)
+    one = [(0, b"\0")]
+    cases = [
+        # (name, w, h, depth, colour, substring the rejection must mention)
+        #
+        # 2^31-1 squared at 8 bytes per pixel. Row bytes reach 2^34 and the
+        # height is 2^31, so (rowbytes+1)*height needs 65 bits: unguarded it
+        # wraps from 36893488115206848519 to 18446744041497296903, and a
+        # length check against a wrapped total is no check at all.
+        ("ovf_rowsxh", 0x7FFFFFFF, 0x7FFFFFFF, 16, 6,
+         "scanline total overflows"),
+        # One scanline, 17 GB of it. No 64-bit wrap; the size ceiling is what
+        # has to say no.
+        ("ovf_onerow", 0x7FFFFFFF, 1, 16, 6, "limit"),
+        # 10 GB of RGBA8, the shape a plausible-looking header takes.
+        ("ovf_10gb", 100000, 100000, 8, 6, "limit"),
+        # The same arithmetic through Adam7, where it is summed seven times.
+        ("ovf_adam7", 0x7FFFFFFF, 0x7FFFFFFF, 16, 6,
+         "scanline total overflows"),
+    ]
+    for name, w, h, depth, colour, msg in cases:
+        png("%s/%s.png" % (d, name), w, h, depth, colour, one,
+            interlace=1 if "adam7" in name else 0)
+        print("%s %s" % (name, msg))
+    # Honest dimensions, dishonest IDAT: one byte short and one byte long.
+    png("%s/short_idat.png" % d, 8, 8, 8, 0, [(0, bytes(8))] * 7)
+    print("short_idat size")
+    png("%s/long_idat.png" % d, 8, 8, 8, 0, [(0, bytes(8))] * 9)
+    print("long_idat size")
+
+
 if __name__ == "__main__":
-    {"idat": cmd_idat, "crc": cmd_crc, "mkfilt": cmd_mkfilt}[sys.argv[1]](
+    {"idat": cmd_idat, "crc": cmd_crc, "mkfilt": cmd_mkfilt,
+     "mkbad": cmd_mkbad}[sys.argv[1]](
         *sys.argv[2:])

@@ -127,6 +127,28 @@ for f in "$S"/*.png; do
 done
 [ "$crcbad" = 0 ] && ok
 
+# ------------------------------- 3. hostile headers must not be believed
+# Width x height x bytes-per-pixel is the classic image-decoder overflow, and
+# a crafted IHDR is the whole attack: correct signature, correct CRCs, and
+# dimensions whose product does not fit the machine. These assert the exact
+# rejection, not merely "exit 1", because the wrong guard firing would hide
+# the fact that the right one is missing.
+mkdir -p "$D/bad"
+python3 "$R/t/oracle.py" mkbad "$D/bad" > "$D/badlist"
+while read -r name msg; do
+	"$IN" "$D/bad/$name.png" > "$D/out" 2>"$D/err"
+	rc=$?
+	if [ "$rc" != 1 ]; then
+		bad "$name: exit $rc, not a clean rejection"
+	elif [ -s "$D/out" ]; then
+		bad "$name: rejected but wrote to stdout"
+	elif ! grep -qi "$msg" "$D/err"; then
+		bad "$name: rejected for the wrong reason: $(cat "$D/err")"
+	else
+		ok
+	fi
+done < "$D/badlist"
+
 printf '\nPngSuite (%s): %d/%d valid decoded, %d/%d corrupt rejected\n' \
 	"$MODE" "$nvalid" "$WANT_VALID" "$ncorrupt" "$WANT_CORRUPT"
 printf '%d passed, %d failed\n' "$pass" "$fail"

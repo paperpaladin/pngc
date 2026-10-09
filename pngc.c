@@ -424,6 +424,80 @@ static const char *walk(const uint8_t *p, size_t n, Png *im) {
 	return NULL;
 }
 
+
+/* ------------------------------------------------------- size arithmetic */
+
+/* Adam7, clause 8.2. Seven passes, each with its own origin and stride, so
+ * each has its own width, height and -- the part decoders get wrong -- its own
+ * per-scanline filter byte. A pass can be legitimately empty: a 1-pixel-wide
+ * image puts nothing at all in passes 2, 4 and 6.
+ */
+static const uint32_t A7X0[7] = {0, 4, 0, 2, 0, 1, 0};
+static const uint32_t A7Y0[7] = {0, 0, 4, 0, 2, 0, 1};
+static const uint32_t A7XS[7] = {8, 8, 4, 4, 2, 2, 1};
+static const uint32_t A7YS[7] = {8, 8, 8, 4, 4, 2, 2};
+
+static uint32_t passdim(uint32_t n, uint32_t start, uint32_t step) {
+	return n > start ? (n - start + step - 1) / step : 0;
+}
+
+/* Bytes in one scanline, excluding its filter byte. 64-bit on purpose: w is
+ * under 2^31, chans at most 4 and depth at most 16, so the bit count is at
+ * most 2^37 and cannot wrap here. It very much can wrap once multiplied by a
+ * height, which is what the caller has to guard. */
+static uint64_t rowbits(uint32_t w, int depth, int chans) {
+	return (uint64_t)w * (unsigned)chans * (unsigned)depth;
+}
+static uint64_t rowbytes(uint32_t w, int depth, int chans) {
+	return (rowbits(w, depth, chans) + 7) / 8;
+}
+
+/* shortcut: a flat 1 GiB ceiling on decoded pixel data, so that a header
+ * claiming 2^31 x 2^31 is refused by policy rather than by whatever malloc
+ * happens to do. Make it a -m flag if anyone needs a bigger image than this.
+ */
+#define MAXPIX (1024ull * 1024 * 1024)
+
+/* Exactly how many bytes the inflated IDAT stream must contain: for every
+ * non-empty pass, one filter byte plus one scanline, per row.
+ *
+ * The multiply below is THE image-decoder integer overflow. rowbytes can reach
+ * 2^34 and height 2^31, whose product needs 65 bits, so on a 64-bit machine
+ * the unguarded form wraps to a small number -- and a small number is exactly
+ * what makes it dangerous, because the allocation then succeeds and the
+ * scanline loop walks off the end of it. t/run.sh crafts an IHDR that lands on
+ * that wrap deliberately.
+ */
+static const char *expected_raw(const Png *im, uint64_t *out) {
+	uint64_t total = 0;
+	int lo = im->interlace ? 0 : 6, hi = 7;
+	for (int p = lo; p < hi; p++) {
+		uint32_t pw = im->w, ph = im->h;
+		if (im->interlace) {
+			pw = passdim(im->w, A7X0[p], A7XS[p]);
+			ph = passdim(im->h, A7Y0[p], A7YS[p]);
+		}
+		if (!pw || !ph) continue;
+		uint64_t rb = rowbytes(pw, im->depth, im->chans) + 1;
+		if (ph > (UINT64_MAX - total) / rb)
+			return "scanline total overflows 64 bits";
+		total += rb * ph;
+	}
+	*out = total;
+	return NULL;
+}
+
+/* Bytes of unpacked, unfiltered scanline data for the whole image, which is
+ * what gets allocated. Same overflow, second place to make it. */
+static const char *image_bytes(const Png *im, uint64_t *out) {
+	uint64_t rb = rowbytes(im->w, im->depth, im->chans);
+	if (im->h > UINT64_MAX / (rb ? rb : 1)) return "image dimensions overflow";
+	uint64_t n = rb * im->h;
+	if (n > MAXPIX || n > SIZE_MAX) return "image larger than the 1 GiB limit";
+	*out = n;
+	return NULL;
+}
+
 /* -------------------------------------------------------------------- io */
 
 static Buf slurp(const char *path) {
@@ -457,8 +531,16 @@ int main(int argc, char **argv) {
 	Png im;
 	memset(&im, 0, sizeof im);
 	Buf raw = {0, 0, 0};
+	uint64_t want = 0, npix = 0;
 	const char *e = walk(in.p, in.n, &im);
+	if (!e) e = expected_raw(&im, &want);
+	if (!e) e = image_bytes(&im, &npix);
 	if (!e) e = zinflate(im.idat.p, im.idat.n, &raw);
+	/* The stream has to be exactly the right length. Too short and some
+	 * scanline is missing; too long and the file is not describing the image
+	 * its own header describes. Either way, guessing is how a decoder ends up
+	 * reading past the end of what it inflated. */
+	if (!e && raw.n != want) e = "inflated IDAT is not the size IHDR implies";
 	if (e) {
 		fprintf(stderr, "pngc: %s\n", e);
 		free(in.p);
@@ -472,8 +554,10 @@ int main(int argc, char **argv) {
 		if (raw.n && fwrite(raw.p, 1, raw.n, stdout) != raw.n)
 			die("write error");
 	} else {
-		printf("ok %ux%u depth %d colour %d interlace %d, %zu raw bytes\n",
-		       im.w, im.h, im.depth, im.colour, im.interlace, raw.n);
+		printf("ok %ux%u depth %d colour %d interlace %d, "
+		       "%zu raw bytes, %llu pixel bytes\n",
+		       im.w, im.h, im.depth, im.colour, im.interlace, raw.n,
+		       (unsigned long long)npix);
 	}
 	free(in.p);
 	free(im.idat.p);
