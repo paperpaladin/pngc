@@ -340,7 +340,50 @@ else bad "fuzz: $nfz of $ntry inputs handled cleanly"; fi
 if [ "$nacc" = 0 ]; then ok
 else bad "fuzz: $nacc corrupted inputs were accepted"; fi
 
-# ------------------------------- 8. hostile headers must not be believed
+# ------------------- 8. the chunk rules PngSuite does not have a file for
+# PngSuite's x*.png cover bad signatures, bad CRCs, bad IHDR fields and a
+# missing IDAT. The rest of clause 4 and clause 11 has no file in the corpus,
+# so these are built here: duplicate and misordered IHDR, PLTE and tRNS, a
+# palette in a greyscale image, more palette entries than the depth can index,
+# an index past the end of the palette, every wrong tRNS length, a tRNS key
+# above the bit depth, an unknown CRITICAL chunk, a non-alphabetic chunk type,
+# a length with the high bit set, data after IEND, a missing IEND, and an IDAT
+# run interrupted by another chunk.
+#
+# Every one has a correct signature and correct CRC-32s, so only the rule
+# under test can catch it, and each asserts the exact rejection reason -- a
+# different guard firing would hide the fact that the right one is absent.
+#
+# Two of them are CONTROLS that must be ACCEPTED, built by the same helper
+# with nothing wrong. Without those, every rejection here could be the
+# fixture generator emitting a broken IDAT, and the suite would be green for
+# a reason that has nothing to do with the rules.
+mkdir -p "$D/seq"
+nseq=0
+nseqtry=0
+for name_msg in $(python3 "$R/t/oracle.py" mkseq "$D/seq" | tr " " ":"); do
+	name=${name_msg%%:*}
+	msg=$(printf '%s' "${name_msg#*:}" | tr ":" " ")
+	nseqtry=$((nseqtry+1))
+	"$IN" "$D/seq/$name.png" > "$D/out" 2>"$D/err"
+	rc=$?
+	if [ "$msg" = ACCEPT ]; then
+		if [ "$rc" = 0 ] && [ -s "$D/out" ]; then nseq=$((nseq+1))
+		else bad "$name: control file rejected ($(cat "$D/err"))"; fi
+	elif [ "$rc" != 1 ]; then
+		bad "$name: exit $rc, not a clean rejection"
+	elif [ -s "$D/out" ]; then
+		bad "$name: rejected but wrote to stdout"
+	elif grep -qi "$msg" "$D/err"; then
+		nseq=$((nseq+1))
+	else
+		bad "$name: wrong reason: want '$msg', got '$(cat "$D/err")'"
+	fi
+done
+if [ "$nseq" = "$nseqtry" ] && [ "$nseqtry" -ge 29 ]; then ok
+else bad "chunk rules: $nseq of $nseqtry"; fi
+
+# -------------------------------- 9. hostile headers must not be believed
 # Width x height x bytes-per-pixel is the classic image-decoder overflow, and
 # a crafted IHDR is the whole attack: correct signature, correct CRCs, and
 # dimensions whose product does not fit the machine. These assert the exact

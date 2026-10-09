@@ -14,6 +14,7 @@ cancel out: it would show up as a mismatch.
 	dims FILE       print "W H" straight out of IHDR
 	mksplit DIR F   rewrite F with its IDAT split at awkward boundaries
 	mkfuzz DIR F    truncations and single-byte mutations of F
+	mkseq DIR       chunk-structure errors PngSuite does not cover
 	cmp8 A B        compare two PAM files, truncating 16-bit samples to 8
 """
 import os
@@ -259,6 +260,125 @@ def cmd_mkfuzz(d, src):
     print("\n".join(names))
 
 
+def raw_png(path, chunks_in, sig=SIG, tail=b""):
+    """Assemble a file from explicit (type, body) pairs, CRCs computed. Takes
+    the chunk list literally, so it can build files no encoder would."""
+    out = bytearray(sig)
+    for t, body in chunks_in:
+        out.extend(struct.pack(">I", len(body)))
+        out.extend(t + body)
+        out.extend(struct.pack(">I", zlib.crc32(t + body) & 0xFFFFFFFF))
+    out.extend(tail)
+    open(path, "wb").write(bytes(out))
+
+
+def cmd_mkseq(d):
+    """Chunk-structure and chunk-content errors, every one with a correct
+    signature and correct CRC-32s, so nothing but the rule being tested can
+    catch them. PngSuite's x*.png cover bad signatures, bad CRCs, bad IHDR
+    fields and a missing IDAT; these are the rest of clause 4 and 11."""
+    os.makedirs(d, exist_ok=True)
+
+    def ih(w=4, h=4, depth=8, colour=0, interlace=0):
+        return struct.pack(">IIBBBBB", w, h, depth, colour, 0, 0, interlace)
+
+    def idat(w=4, h=4, bpp=1):
+        return zlib.compress(bytes((1 + w * bpp) * h), 6)
+
+    pal = bytes(3 * 4)
+    end = (b"IEND", b"")
+    cases = []
+
+    def case(name, chunks_in, msg, **kw):
+        raw_png("%s/%s.png" % (d, name), chunks_in, **kw)
+        cases.append((name, msg))
+
+    case("two_ihdr", [(b"IHDR", ih()), (b"IHDR", ih()), (b"IDAT", idat()),
+                      end], "duplicate IHDR")
+    case("no_ihdr", [(b"gAMA", b"\0\0\0\1"), (b"IHDR", ih()),
+                     (b"IDAT", idat()), end], "not IHDR")
+    case("ihdr_short", [(b"IHDR", ih()[:12]), (b"IDAT", idat()), end],
+         "13 bytes")
+    case("no_iend", [(b"IHDR", ih()), (b"IDAT", idat())], "no IEND")
+    case("iend_data", [(b"IHDR", ih()), (b"IDAT", idat()),
+                       (b"IEND", b"x")], "IEND is not empty")
+    case("after_iend", [(b"IHDR", ih()), (b"IDAT", idat()), end],
+         "data after IEND", tail=b"junk")
+    case("idat_gap", [(b"IHDR", ih()), (b"IDAT", idat()[:4]),
+                      (b"tEXt", b"k\0v"), (b"IDAT", idat()[4:]), end],
+         "not consecutive")
+    case("unknown_crit", [(b"IHDR", ih()), (b"QRST", b"zz"),
+                          (b"IDAT", idat()), end], "unknown critical chunk")
+    case("type_digits", [(b"IHDR", ih()), (b"1234", b""), (b"IDAT", idat()),
+                         end], "not alphabetic")
+    # Colour type 3 with no palette, and a palette where there must not be one.
+    case("pal_no_plte", [(b"IHDR", ih(colour=3)), (b"IDAT", idat()), end],
+         "no PLTE")
+    case("plte_in_grey", [(b"IHDR", ih()), (b"PLTE", pal),
+                          (b"IDAT", idat()), end], "greyscale")
+    case("plte_in_ga", [(b"IHDR", ih(colour=4)), (b"PLTE", pal),
+                        (b"IDAT", idat(bpp=2)), end], "greyscale")
+    case("two_plte", [(b"IHDR", ih(colour=3)), (b"PLTE", pal),
+                      (b"PLTE", pal), (b"IDAT", idat()), end],
+         "duplicate PLTE")
+    case("plte_after_idat", [(b"IHDR", ih(colour=3)), (b"IDAT", idat()),
+                             (b"PLTE", pal), end], "PLTE after IDAT")
+    case("plte_len", [(b"IHDR", ih(colour=3)), (b"PLTE", bytes(7)),
+                      (b"IDAT", idat()), end], "RGB triples")
+    case("plte_empty", [(b"IHDR", ih(colour=3)), (b"PLTE", b""),
+                        (b"IDAT", idat()), end], "RGB triples")
+    # Five entries in a 2-bit palette image: four is the most it can index.
+    case("plte_overdepth", [(b"IHDR", ih(depth=2, colour=3)),
+                            (b"PLTE", bytes(3 * 5)),
+                            (b"IDAT", zlib.compress(bytes(2 * 4), 6)), end],
+         "bit depth can index")
+    # An index of 3 against a palette holding two entries.
+    case("plte_index", [(b"IHDR", ih(w=1, h=1, colour=3)),
+                        (b"PLTE", bytes(6)),
+                        (b"IDAT", zlib.compress(b"\0\3", 6)), end],
+         "past the end of PLTE")
+    case("trns_on_rgba", [(b"IHDR", ih(colour=6)), (b"tRNS", b"\0\0"),
+                          (b"IDAT", idat(bpp=4)), end], "already has an alpha")
+    case("trns_grey_len", [(b"IHDR", ih()), (b"tRNS", b"\0\0\0"),
+                           (b"IDAT", idat()), end], "not 2 bytes")
+    case("trns_rgb_len", [(b"IHDR", ih(colour=2)), (b"tRNS", b"\0\0"),
+                          (b"IDAT", idat(bpp=3)), end], "not 6 bytes")
+    # Key 300 in an 8-bit image, where no sample can ever equal it.
+    case("trns_overdepth", [(b"IHDR", ih()), (b"tRNS", b"\x01\x2c"),
+                            (b"IDAT", idat()), end], "above the bit depth")
+    case("trns_before_plte", [(b"IHDR", ih(colour=3)), (b"tRNS", b"\0"),
+                              (b"PLTE", pal), (b"IDAT", idat()), end],
+         "before PLTE")
+    case("trns_longer_than_plte", [(b"IHDR", ih(colour=3)), (b"PLTE", pal),
+                                   (b"tRNS", bytes(5)), (b"IDAT", idat()),
+                                   end], "longer than the palette")
+    case("two_trns", [(b"IHDR", ih()), (b"tRNS", b"\0\0"),
+                      (b"tRNS", b"\0\0"), (b"IDAT", idat()), end],
+         "duplicate tRNS")
+    case("trns_after_idat", [(b"IHDR", ih()), (b"IDAT", idat()),
+                             (b"tRNS", b"\0\0"), end], "tRNS after IDAT")
+    # A length with the high bit set: clause 3.2 caps it at 2^31-1.
+    big = bytearray(SIG)
+    big.extend(b"\x00\x00\x00\x0dIHDR" + ih())
+    big.extend(struct.pack(">I", zlib.crc32(b"IHDR" + ih()) & 0xFFFFFFFF))
+    big.extend(b"\x80\x00\x00\x01IDAT")
+    open("%s/len_high_bit.png" % d, "wb").write(bytes(big))
+    cases.append(("len_high_bit", "chunk length exceeds"))
+
+    # The control. Built by the same helper, with nothing wrong: it must be
+    # ACCEPTED. Without it every rejection above could be the helper emitting
+    # a malformed IDAT and the suite would be green for the wrong reason.
+    raw_png("%s/control.png" % d, [(b"IHDR", ih()), (b"IDAT", idat()), end])
+    raw_png("%s/control_pal.png" % d, [(b"IHDR", ih(colour=3)),
+                                       (b"PLTE", pal), (b"tRNS", b"\0\x80"),
+                                       (b"IDAT", idat()), end])
+
+    print("control ACCEPT")
+    print("control_pal ACCEPT")
+    for name, msg in cases:
+        print("%s %s" % (name, msg))
+
+
 def cmd_mkbad(d):
     """Files a decoder has to refuse without crashing. Every one of these has
     a correct signature and correct CRCs, so nothing upstream of the header
@@ -297,5 +417,6 @@ def cmd_mkbad(d):
 if __name__ == "__main__":
     {"idat": cmd_idat, "crc": cmd_crc, "mkfilt": cmd_mkfilt,
      "mkbad": cmd_mkbad, "dims": cmd_dims, "cmp8": cmd_cmp8,
-     "mksplit": cmd_mksplit, "mkfuzz": cmd_mkfuzz}[sys.argv[1]](
+     "mksplit": cmd_mksplit, "mkfuzz": cmd_mkfuzz,
+     "mkseq": cmd_mkseq}[sys.argv[1]](
         *sys.argv[2:])
