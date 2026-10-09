@@ -65,7 +65,7 @@ fi
 # decoder that improves has to come here and say so.
 GOT_VALID=162   # every valid file in the corpus renders
 GOT_CORRUPT=14  # every x*.png is now caught
-GOT_PIX=151     # the 11 tRNS files still come out opaque
+GOT_PIX=162     # libpng agrees on every valid file in the corpus
 
 # ------------------------------------------------- 1. the corpus, scored
 nvalid=0

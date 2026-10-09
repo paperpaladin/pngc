@@ -427,6 +427,38 @@ static const char *walk(const uint8_t *p, size_t n, Png *im) {
 				return "more palette entries than the bit depth can index";
 			memcpy(im->plte, d, len);
 			im->nplte = (int)(len / 3);
+		} else if (!memcmp(type, "tRNS", 4)) {
+			/* Clause 11.3.2. Three different chunks sharing one name, and the
+			 * only thing they have in common is that they must come after
+			 * PLTE and before IDAT. */
+			if (seen_idat) return "tRNS after IDAT";
+			if (im->has_trns) return "duplicate tRNS";
+			if (im->colour == 4 || im->colour == 6)
+				return "tRNS in an image that already has an alpha channel";
+			if (im->colour == 3) {
+				/* One alpha byte per palette entry, and legally FEWER than
+				 * the palette has: the entries it does not reach stay
+				 * opaque. tbbn3p08 is exactly that file. */
+				if (!im->nplte) return "tRNS before PLTE";
+				if (!len || len > (uint32_t)im->nplte)
+					return "palette tRNS longer than the palette";
+				memset(im->trns, 255, sizeof im->trns);
+				memcpy(im->trns, d, len);
+				im->ntrns = (int)len;
+			} else if (im->colour == 0) {
+				if (len != 2) return "greyscale tRNS is not 2 bytes";
+				im->tk[0] = (uint16_t)(d[0] << 8 | d[1]);
+				if (im->tk[0] > (1u << im->depth) - 1u)
+					return "tRNS sample above the bit depth";
+			} else {
+				if (len != 6) return "truecolour tRNS is not 6 bytes";
+				for (int c = 0; c < 3; c++) {
+					im->tk[c] = (uint16_t)(d[c * 2] << 8 | d[c * 2 + 1]);
+					if (im->tk[c] > (1u << im->depth) - 1u)
+						return "tRNS sample above the bit depth";
+				}
+			}
+			im->has_trns = 1;
 		} else if (critical) {
 			/* An unknown critical chunk means the file needs something we do
 			 * not implement, so guessing is worse than refusing. */
@@ -659,18 +691,23 @@ static void topixel(const Png *im, const uint8_t *row, size_t k,
 		px[0] = im->plte[i * 3 + 0];
 		px[1] = im->plte[i * 3 + 1];
 		px[2] = im->plte[i * 3 + 2];
-		px[3] = 255;
+		px[3] = i < (unsigned)im->ntrns ? im->trns[i] : 255;
 		break;
 	}
 	case 0:
 		px[0] = px[1] = px[2] = getsample(row, k, im->depth);
-		px[3] = full;
+		/* One sample value, not a range: that exact grey is transparent and
+		 * every other grey is opaque. */
+		px[3] = (im->has_trns && px[0] == im->tk[0]) ? 0 : full;
 		break;
 	case 2:
 		px[0] = getsample(row, k * 3 + 0, im->depth);
 		px[1] = getsample(row, k * 3 + 1, im->depth);
 		px[2] = getsample(row, k * 3 + 2, im->depth);
-		px[3] = full;
+		/* All three samples have to match, which is why the key is kept as
+		 * three 16-bit values rather than collapsed into one. */
+		px[3] = (im->has_trns && px[0] == im->tk[0] && px[1] == im->tk[1] &&
+		         px[2] == im->tk[2]) ? 0 : full;
 		break;
 	case 4:
 		px[0] = px[1] = px[2] = getsample(row, k * 2 + 0, im->depth);
