@@ -136,7 +136,6 @@ done
 mkdir -p "$D/filt"
 nfilt=0
 for name in $(python3 "$R/t/oracle.py" mkfilt "$D/filt"); do
-	case $name in f4_*|fmix_*) continue ;; esac   # Paeth: next commit
 	"$IN" -r "$D/filt/$name.png" > "$D/filt/$name.got" 2>"$D/err" || {
 		bad "filter fixture $name: $(cat "$D/err")"
 		continue
@@ -144,8 +143,8 @@ for name in $(python3 "$R/t/oracle.py" mkfilt "$D/filt"); do
 	if cmp -s "$D/filt/$name.raw" "$D/filt/$name.got"; then nfilt=$((nfilt+1))
 	else bad "filter fixture $name: unfiltered bytes differ"; fi
 done
-if [ "$nfilt" = 32 ]; then ok
-else bad "filter fixtures: $nfilt of 32 matched"; fi
+if [ "$nfilt" = 50 ]; then ok
+else bad "filter fixtures: $nfilt of 50 matched"; fi
 
 # ------------------------------- 4. hostile headers must not be believed
 # Width x height x bytes-per-pixel is the classic image-decoder overflow, and

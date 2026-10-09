@@ -126,6 +126,23 @@ def cmd_mkfilt(d):
                 encode(px, w, h, bpp, [rnd.randrange(5) for _ in range(h)]))
             open("%s/%s.raw" % (d, name), "wb").write(b"".join(px))
             index.append(name)
+    # Paeth gets two more, because its tie-breaking is where decoders diverge
+    # and 23x17 of uniform random bytes does not hit the ties often enough.
+    # Greyscale depth 8 so bpp is 1 and (a, b, c) are three adjacent bytes:
+    # every pixel in the image is one more sample of the predictor.
+    w = h = 257
+    px = [bytes(rnd.randrange(256) for _ in range(w)) for _ in range(h)]
+    png("%s/paeth_wide.png" % d, w, h, 8, 0, encode(px, w, h, 1, [4] * h))
+    open("%s/paeth_wide.raw" % d, "wb").write(b"".join(px))
+    index.append("paeth_wide")
+    # Values clustered at the ends and the middle, so p - a, p - b and p - c
+    # collide constantly and all three branches plus both ties are taken.
+    alpha = [0, 1, 2, 126, 127, 128, 129, 254, 255]
+    w = h = 128
+    px = [bytes(rnd.choice(alpha) for _ in range(w)) for _ in range(h)]
+    png("%s/paeth_tie.png" % d, w, h, 8, 0, encode(px, w, h, 1, [4] * h))
+    open("%s/paeth_tie.raw" % d, "wb").write(b"".join(px))
+    index.append("paeth_tie")
     print("\n".join(index))
 
 

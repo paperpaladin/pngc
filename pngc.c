@@ -509,6 +509,21 @@ static const char *image_bytes(const Png *im, uint64_t *out) {
  *	b = the byte directly above, 0 on the first row
  *	c = the byte above and bpp to the left, 0 off either edge
  */
+/* Clause 6.6, written as the spec writes it. The most commonly miscoded line
+ * in PNG: the tie-breaking is not symmetric, the comparisons are <= and not <,
+ * and the order a-then-b-then-c is normative. p can be negative and can exceed
+ * 255, so the arithmetic has to be signed and wider than a byte -- doing it in
+ * uint8_t is the classic wrong version that still decodes most images. */
+static unsigned paeth(unsigned a, unsigned b, unsigned c) {
+	int p = (int)a + (int)b - (int)c;
+	int pa = p > (int)a ? p - (int)a : (int)a - p;
+	int pb = p > (int)b ? p - (int)b : (int)b - p;
+	int pc = p > (int)c ? p - (int)c : (int)c - p;
+	if (pa <= pb && pa <= pc) return a;
+	if (pb <= pc) return b;
+	return c;
+}
+
 static size_t filtbpp(int depth, int chans) {
 	int bits = depth * chans;
 	return bits >= 8 ? (size_t)(bits / 8) : 1;
@@ -528,11 +543,13 @@ static const char *unfilter(const uint8_t *src, uint8_t *dst, uint32_t rows,
 		for (size_t i = 0; i < rb; i++) {
 			unsigned a = i >= bpp ? cur[i - bpp] : 0;
 			unsigned b = prev ? prev[i] : 0;
+			unsigned c = (prev && i >= bpp) ? prev[i - bpp] : 0;
 			unsigned x = src[i];
 			switch (f) {
 			case 1: x += a; break;
 			case 2: x += b; break;
 			case 3: x += (a + b) >> 1; break;  /* floor, clause 6.4 */
+			case 4: x += paeth(a, b, c); break;
 			default: break;                    /* 0, None */
 			}
 			cur[i] = (uint8_t)x;
