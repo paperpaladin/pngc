@@ -1,0 +1,14 @@
+These 54 files are a subset of PngSuite, copied verbatim, not generated here.
+
+	source:  http://www.schaik.com/pngsuite/PngSuite-2017jul19.tgz
+	sha256:  0294b244c95a8342c01b00010cf34abdcabc7c6a34fd0fe1bd963917537bfdc8
+	author:  Willem van Schaik, see PngSuite.LICENSE
+	size:    68521 bytes for the whole tarball, 176 images
+
+The whole corpus is what t/run.sh scores against; it fetches the tarball into
+.scratch/ on first run and caches it there. This subset exists so that
+`make test` still means something with no network: it is chosen for coverage
+rather than for size -- every colour type, every bit depth, both interlace
+modes, all five filters, tRNS in all three forms, the 1-byte IDAT split, two
+zlib levels, four matched interlaced/non-interlaced pairs, and all 14 of the
+deliberately corrupt x*.png files, which are the ones that must be rejected.

@@ -1,0 +1,6 @@
+pngc
+pngc-asan
+.scratch/
+t/tmp/
+*.o
+*.pam
