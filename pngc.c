@@ -25,6 +25,15 @@ static void die(const char *m) {
 	exit(1);
 }
 
+static const char USAGE[] =
+	"usage: pngc [-z|-r] [file.png]        (stdin if no file)\n"
+	"  (default)  decode to RGBA and write a PAM (netpbm P7) on stdout\n"
+	"  -r         write the unfiltered scanline bytes, before colour\n"
+	"             conversion: stage two of the decoder, for t/oracle.py\n"
+	"  -z         write the inflated IDAT stream: stage one, so Python's\n"
+	"             zlib can be asked whether it agrees\n"
+	"exit 0 if the file decoded, 1 if it was refused, 2 on a usage error.\n";
+
 /* ---------------------------------------------------------------- buffer */
 
 typedef struct { uint8_t *p; size_t n, cap; } Buf;
@@ -809,8 +818,11 @@ int main(int argc, char **argv) {
 	for (int a = 1; a < argc; a++) {
 		if (!strcmp(argv[a], "-z")) { zdump = 1; continue; }
 		if (!strcmp(argv[a], "-r")) { rdump = 1; continue; }
-		if (argv[a][0] == '-' && argv[a][1])
-			die("usage: pngc [-z|-r] [file.png]");
+		if (!strcmp(argv[a], "-h")) { fputs(USAGE, stdout); return 0; }
+		if (argv[a][0] == '-' && argv[a][1]) {
+			fputs(USAGE, stderr);
+			return 2;
+		}
 		path = argv[a];
 	}
 

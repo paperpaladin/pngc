@@ -405,6 +405,26 @@ while read -r name msg; do
 	fi
 done < "$D/badlist"
 
+# ----------------------------------------- 10. the interface it presents
+# Cheap, and each one has been wrong in some program at some point.
+a=$("$IN" "$S/basn6a08.png" | md5sum)
+b=$("$IN" < "$S/basn6a08.png" | md5sum)
+[ "$a" = "$b" ] && ok || bad "stdin and a file argument gave different output"
+"$IN" -h > "$D/usage" 2>&1
+[ $? = 0 ] && [ -s "$D/usage" ] && ok || bad "-h must print usage and exit 0"
+"$IN" --nonsense > "$D/out" 2>/dev/null
+[ $? = 2 ] && ok || bad "an unknown flag must exit 2, not 0 or 1"
+"$IN" "$D/does-not-exist.png" > "$D/out" 2>/dev/null
+[ $? = 1 ] && [ ! -s "$D/out" ] && ok || bad "a missing file must exit 1"
+# A PAM a third party can read: the header netpbm specifies, and a payload
+# exactly WIDTH*HEIGHT*4*(1 or 2) bytes long.
+"$IN" "$S/basn2c16.png" > "$D/p.pam"
+head -c 64 "$D/p.pam" | grep -q "^P7" && ok || bad "PAM does not start with P7"
+exp=$((32 * 32 * 4 * 2))
+hdr=$(head -c 200 "$D/p.pam" | grep -abo ENDHDR | cut -d: -f1)
+got=$(($(wc -c < "$D/p.pam") - hdr - 7))
+[ "$got" = "$exp" ] && ok || bad "PAM payload is $got bytes, want $exp"
+
 printf '\nPngSuite (%s): %d/%d valid decoded, %d/%d corrupt rejected\n' \
 	"$MODE" "$nvalid" "$WANT_VALID" "$ncorrupt" "$WANT_CORRUPT"
 printf '%d passed, %d failed\n' "$pass" "$fail"
