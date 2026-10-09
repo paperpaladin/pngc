@@ -43,6 +43,11 @@ static void bneed(Buf *b, size_t extra) {
 	b->cap = c;
 }
 static void bwrite(Buf *b, const void *s, size_t n) {
+	/* A zero-length append is not a no-op to reach for: bneed does not
+	 * allocate for it, so b->p is still NULL, and memcpy(NULL, s, 0) is
+	 * undefined even though it copies nothing. Zero-length IDAT chunks are
+	 * legal PNG, so this path is reached by real files. */
+	if (!n) return;
 	bneed(b, n);
 	memcpy(b->p + b->n, s, n);
 	b->n += n;
