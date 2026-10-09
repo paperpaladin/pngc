@@ -146,7 +146,8 @@ done
 # different filter on every scanline.
 mkdir -p "$D/filt"
 nfilt=0
-for name in $(python3 "$R/t/oracle.py" mkfilt "$D/filt"); do
+python3 "$R/t/oracle.py" mkfilt "$D/filt" > "$D/filt/index"
+for name in $(cat "$D/filt/index"); do
 	"$IN" -r "$D/filt/$name.png" > "$D/filt/$name.got" 2>"$D/err" || {
 		bad "filter fixture $name: $(cat "$D/err")"
 		continue
@@ -156,6 +157,29 @@ for name in $(python3 "$R/t/oracle.py" mkfilt "$D/filt"); do
 done
 if [ "$nfilt" = 50 ]; then ok
 else bad "filter fixtures: $nfilt of 50 matched"; fi
+
+# The same fixtures again, all the way through to RGBA this time. libpng can
+# only ever check the HIGH byte of a 16-bit sample, because gdk-pixbuf hands
+# back 8-bit pixels -- so until this existed, zeroing every low byte left the
+# entire suite green. The expected payloads are expanded from the random bytes
+# Python generated, which is what pins where each one lands.
+nrgba=0
+for name in $(cat "$D/filt/index"); do
+	case $name in paeth_*) continue ;; esac
+	c=${name#*_c}; c=${c%%_*}
+	dep=${name##*_d}
+	python3 "$R/t/oracle.py" pam "$D/filt/$name.raw" "$c" "$dep" > "$D/want"
+	"$IN" "$D/filt/$name.png" > "$D/p.pam" 2>"$D/err" || {
+		bad "rgba fixture $name: $(cat "$D/err")"
+		continue
+	}
+	hdr=$(head -c 200 "$D/p.pam" | grep -abo ENDHDR | cut -d: -f1)
+	tail -c +$((hdr + 8)) "$D/p.pam" > "$D/got"
+	if cmp -s "$D/want" "$D/got"; then nrgba=$((nrgba+1))
+	else bad "rgba fixture $name: payload differs from the expected RGBA"; fi
+done
+if [ "$nrgba" = 48 ]; then ok
+else bad "rgba fixtures: $nrgba of 48 matched"; fi
 
 # ----------------------------------- 4. libpng decides what the pixels are
 # The real oracle. gdk-pixbuf-thumbnailer is libpng, and asking it for a

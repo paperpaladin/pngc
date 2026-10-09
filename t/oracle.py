@@ -16,6 +16,7 @@ cancel out: it would show up as a mismatch.
 	mkfuzz DIR F    truncations and single-byte mutations of F
 	mkseq DIR       chunk-structure errors PngSuite does not cover
 	cmp8 A B        compare two PAM files, truncating 16-bit samples to 8
+	pam RAW C D     expand raw samples to the RGBA payload we expect back
 """
 import os
 import random
@@ -96,6 +97,35 @@ def cmd_cmp8(a, b):
         i = next(i for i in range(len(pa)) if pa[i] != pb[i])
         fail("%d of %d samples differ, first at %d: %d vs %d"
              % (nd, len(pa), i, pa[i], pb[i]))
+
+
+def cmd_pam(raw, colour, depth):
+    """Expand the pixel bytes of a mkfilt fixture into the RGBA payload pngc
+    must produce, at the source's own sample depth.
+
+    This exists for one reason: gdk-pixbuf hands back 8-bit pixels, so libpng
+    can only ever check the HIGH byte of a 16-bit sample. Setting every low
+    byte to zero left the whole suite green until this was added. The data
+    here is random bytes generated in Python, so where each one lands is
+    pinned by something other than the C code."""
+    colour, depth = int(colour), int(depth)
+    n = 2 if depth == 16 else 1
+    d = open(raw, "rb").read()
+    src = [d[i:i + n] for i in range(0, len(d), n)]
+    full = b"\xff" * n
+    out = bytearray()
+    chans = {0: 1, 2: 3, 4: 2, 6: 4}[colour]
+    for i in range(0, len(src), chans):
+        p = src[i:i + chans]
+        if colour == 0:
+            out += p[0] * 3 + full
+        elif colour == 2:
+            out += p[0] + p[1] + p[2] + full
+        elif colour == 4:
+            out += p[0] * 3 + p[1]
+        else:
+            out += p[0] + p[1] + p[2] + p[3]
+    sys.stdout.buffer.write(bytes(out))
 
 
 def png(path, w, h, depth, colour, rows, plte=None, trns=None, interlace=0):
@@ -418,5 +448,5 @@ if __name__ == "__main__":
     {"idat": cmd_idat, "crc": cmd_crc, "mkfilt": cmd_mkfilt,
      "mkbad": cmd_mkbad, "dims": cmd_dims, "cmp8": cmd_cmp8,
      "mksplit": cmd_mksplit, "mkfuzz": cmd_mkfuzz,
-     "mkseq": cmd_mkseq}[sys.argv[1]](
+     "mkseq": cmd_mkseq, "pam": cmd_pam}[sys.argv[1]](
         *sys.argv[2:])
