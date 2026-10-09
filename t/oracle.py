@@ -13,6 +13,7 @@ cancel out: it would show up as a mismatch.
 	mkbad DIR       write hostile files: huge IHDR dimensions, wrong lengths
 	dims FILE       print "W H" straight out of IHDR
 	mksplit DIR F   rewrite F with its IDAT split at awkward boundaries
+	mkfuzz DIR F    truncations and single-byte mutations of F
 	cmp8 A B        compare two PAM files, truncating 16-bit samples to 8
 """
 import os
@@ -234,6 +235,30 @@ def cmd_mksplit(d, src):
     write("allempty", [b"", b"", b""])
 
 
+def cmd_mkfuzz(d, src):
+    """Every truncation of F, and 200 single-byte mutations of it.
+
+    Every byte of a PNG is covered either by the signature or by a chunk
+    CRC-32 -- except the four length bytes of each chunk header, which are
+    not -- so almost any flipped byte should be caught. The assertion in
+    t/run.sh is weaker than that on purpose: exit 0 or exit 1, never a signal
+    and never a sanitizer abort."""
+    os.makedirs(d, exist_ok=True)
+    data = open(src, "rb").read()
+    rnd = random.Random(len(data))
+    names = []
+    for n in range(len(data)):
+        open("%s/trunc%d.png" % (d, n), "wb").write(data[:n])
+        names.append("trunc%d" % n)
+    for i in range(200):
+        b = bytearray(data)
+        at = rnd.randrange(len(b))
+        b[at] ^= 1 << rnd.randrange(8)
+        open("%s/mut%d.png" % (d, i), "wb").write(bytes(b))
+        names.append("mut%d" % i)
+    print("\n".join(names))
+
+
 def cmd_mkbad(d):
     """Files a decoder has to refuse without crashing. Every one of these has
     a correct signature and correct CRCs, so nothing upstream of the header
@@ -272,5 +297,5 @@ def cmd_mkbad(d):
 if __name__ == "__main__":
     {"idat": cmd_idat, "crc": cmd_crc, "mkfilt": cmd_mkfilt,
      "mkbad": cmd_mkbad, "dims": cmd_dims, "cmp8": cmd_cmp8,
-     "mksplit": cmd_mksplit}[sys.argv[1]](
+     "mksplit": cmd_mksplit, "mkfuzz": cmd_mkfuzz}[sys.argv[1]](
         *sys.argv[2:])

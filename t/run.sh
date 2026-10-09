@@ -306,7 +306,41 @@ for src in basn6a08 basi3p04 basn0g16; do
 	else bad "$src: $nsp of 8 IDAT-split variants decoded"; fi
 done
 
-# ------------------------------- 7. hostile headers must not be believed
+# ----------------------------- 7. nothing may crash, whatever the bytes
+# Every truncation of a real PNG and 200 single-byte mutations of it. The
+# assertion is deliberately not "all rejected": it is exit 0 or exit 1 and
+# nothing else -- no signal, no sanitizer abort (which is why SANOPT sets
+# exitcode=86), and no partial image on stdout from a run that then failed.
+# A segfault is also a nonzero exit, so "nonzero" would not be a test.
+mkdir -p "$D/fz"
+rm -f "$D/fz"/*.png
+FZ=$S/basn6a08.png
+nfz=0
+nacc=0
+ntry=0
+for name in $(python3 "$R/t/oracle.py" mkfuzz "$D/fz" "$FZ"); do
+	ntry=$((ntry+1))
+	"$IN" "$D/fz/$name.png" > "$D/out" 2>/dev/null
+	rc=$?
+	case $rc in
+	0)	nacc=$((nacc+1)); nfz=$((nfz+1)) ;;
+	1)	if [ -s "$D/out" ]; then
+			bad "fuzz $name: rejected but wrote $(wc -c < "$D/out") bytes"
+		else
+			nfz=$((nfz+1))
+		fi ;;
+	*)	bad "fuzz $name: exit $rc" ;;
+	esac
+done
+if [ "$nfz" = "$ntry" ] && [ "$ntry" -gt 300 ]; then ok
+else bad "fuzz: $nfz of $ntry inputs handled cleanly"; fi
+# Every truncation is short and every mutation flips a bit, so nothing in this
+# set should decode. Asserted rather than merely observed: if that ever stops
+# being true it is worth being told.
+if [ "$nacc" = 0 ]; then ok
+else bad "fuzz: $nacc corrupted inputs were accepted"; fi
+
+# ------------------------------- 8. hostile headers must not be believed
 # Width x height x bytes-per-pixel is the classic image-decoder overflow, and
 # a crafted IHDR is the whole attack: correct signature, correct CRCs, and
 # dimensions whose product does not fit the machine. These assert the exact
