@@ -20,6 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* shortcut: die() exits without freeing, so LeakSanitizer flags it. Only
+ * out-of-memory and write-error paths reach it, neither of which has a useful
+ * recovery; wire the buffers to atexit if that ever matters. */
 static void die(const char *m) {
 	fprintf(stderr, "pngc: %s\n", m);
 	exit(1);
@@ -478,6 +481,12 @@ static const char *walk(const uint8_t *p, size_t n, Png *im) {
 			 * not implement, so guessing is worse than refusing. */
 			return "unknown critical chunk";
 		}
+		/* shortcut: every other ancillary chunk is skipped without looking at
+		 * it, so gAMA/bKGD/sBIT/cHRM are neither validated nor required to be
+		 * before IDAT, and the reserved case bit of the third type letter is
+		 * not enforced. libpng does not reject any of those either, so there
+		 * is no oracle to check a stricter reading against; add a position
+		 * table here the day one appears. */
 	}
 	if (!seen_ihdr) return "no IHDR";
 	if (!seen_idat) return "no IDAT";
@@ -795,6 +804,12 @@ static void writepam(const Png *im, const uint8_t *out, size_t n) {
 
 /* -------------------------------------------------------------------- io */
 
+/* shortcut: the whole file, the whole inflated stream, the whole unfiltered
+ * image and the whole RGBA output are all live at once, so decoding an N-byte
+ * PNG costs several times the pixel count and the 1 GiB ceiling above is what
+ * stops that being unbounded. Nothing streams and nothing is progressive.
+ * Rewriting around a 32K window and a one-scanline-at-a-time writer is the
+ * upgrade, the day an image stops fitting in memory. */
 static Buf slurp(const char *path) {
 	FILE *f = path ? fopen(path, "rb") : stdin;
 	if (!f) die("cannot open input");
