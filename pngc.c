@@ -412,15 +412,32 @@ static const char *walk(const uint8_t *p, size_t n, Png *im) {
 			seen_iend = 1;
 			if (i != n) return "data after IEND";
 			break;
+		} else if (!memcmp(type, "PLTE", 4)) {
+			/* Clause 11.2.3. One palette, before IDAT, a whole number of
+			 * RGB triples, at most 256 of them, and at most as many as the
+			 * bit depth can index. Colour types 0 and 4 have no palette to
+			 * have, so a PLTE there is a file that does not make sense. */
+			if (seen_idat) return "PLTE after IDAT";
+			if (im->nplte) return "duplicate PLTE";
+			if (im->colour == 0 || im->colour == 4)
+				return "PLTE in a greyscale image";
+			if (!len || len % 3 || len > 256 * 3)
+				return "PLTE length is not 1 to 256 RGB triples";
+			if (im->colour == 3 && len / 3 > (1u << im->depth))
+				return "more palette entries than the bit depth can index";
+			memcpy(im->plte, d, len);
+			im->nplte = (int)(len / 3);
 		} else if (critical) {
-			/* An unknown critical chunk means the file needs something we do not
-			 * implement, so guessing is worse than refusing. */
-			if (memcmp(type, "PLTE", 4)) return "unknown critical chunk";
+			/* An unknown critical chunk means the file needs something we do
+			 * not implement, so guessing is worse than refusing. */
+			return "unknown critical chunk";
 		}
 	}
 	if (!seen_ihdr) return "no IHDR";
 	if (!seen_idat) return "no IDAT";
 	if (!seen_iend) return "no IEND";
+	/* Clause 11.2.3: for colour type 3 the palette is not optional. */
+	if (im->colour == 3 && !im->nplte) return "palette image with no PLTE";
 	return NULL;
 }
 
@@ -630,13 +647,21 @@ static void topixel(const Png *im, const uint8_t *row, size_t k,
                     unsigned px[4]) {
 	unsigned full = (1u << im->depth) - 1u;
 	switch (im->colour) {
-	case 3:
-		/* Palette lookup lands in the next commit. Until then say so rather
-		 * than fall through into the truecolour case, which would read four
-		 * samples out of a one-sample-per-pixel scanline. */
-		px[0] = px[1] = px[2] = 0;
-		px[3] = full;
+	case 3: {
+		unsigned i = getsample(row, k, im->depth);
+		/* A palette image may legally use fewer entries than its depth can
+		 * index, so an index past the end is a corrupt file and not a
+		 * licence to read whatever follows the array. */
+		if (i >= (unsigned)im->nplte) {
+			px[0] = px[1] = px[2] = px[3] = 0;
+			break;
+		}
+		px[0] = im->plte[i * 3 + 0];
+		px[1] = im->plte[i * 3 + 1];
+		px[2] = im->plte[i * 3 + 2];
+		px[3] = 255;
 		break;
+	}
 	case 0:
 		px[0] = px[1] = px[2] = getsample(row, k, im->depth);
 		px[3] = full;
@@ -665,8 +690,10 @@ static void topixel(const Png *im, const uint8_t *row, size_t k,
  * the identity; for Adam7 the seven passes each land on their own lattice,
  * which is the only reason this is not a memcpy. */
 static const char *render(const Png *im, const Buf *img, uint8_t *out) {
-	if (im->colour == 3) return "palette images are not implemented yet";
 	int wide = im->depth == 16;
+	/* Palette entries are 8-bit whatever the index depth is, so they must not
+	 * go through the sub-byte sample scaling. */
+	int sdepth = im->colour == 3 ? 8 : im->depth;
 	size_t per = wide ? 8 : 4;
 	size_t off = 0;
 	int lo = im->interlace ? 0 : 6;
@@ -685,6 +712,9 @@ static const char *render(const Png *im, const Buf *img, uint8_t *out) {
 			uint8_t *dst = out + ((size_t)(y0 + y * ys) * im->w) * per;
 			for (uint32_t k = 0; k < pw; k++) {
 				unsigned px[4];
+				if (im->colour == 3 &&
+				    getsample(row, k, im->depth) >= (unsigned)im->nplte)
+					return "palette index past the end of PLTE";
 				topixel(im, row, k, px);
 				uint8_t *q = dst + (size_t)(x0 + k * xs) * per;
 				for (int ch = 0; ch < 4; ch++) {
@@ -692,7 +722,7 @@ static const char *render(const Png *im, const Buf *img, uint8_t *out) {
 						q[2 * ch] = (uint8_t)(px[ch] >> 8);
 						q[2 * ch + 1] = (uint8_t)px[ch];
 					} else {
-						q[ch] = (uint8_t)to8(px[ch], im->depth);
+						q[ch] = (uint8_t)to8(px[ch], sdepth);
 					}
 				}
 			}

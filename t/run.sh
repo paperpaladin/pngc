@@ -63,9 +63,9 @@ fi
 # How many of each this binary is expected to get right. Asserted, not
 # reported: a decoder that regresses to 100 has to fail the suite, and a
 # decoder that improves has to come here and say so.
-GOT_VALID=99    # palette is not implemented, so 63 files do not render yet
+GOT_VALID=162   # every valid file in the corpus renders
 GOT_CORRUPT=14  # every x*.png is now caught
-GOT_PIX=94      # and five of those 99 carry a tRNS chunk we ignore
+GOT_PIX=151     # the 11 tRNS files still come out opaque
 
 # ------------------------------------------------- 1. the corpus, scored
 nvalid=0
