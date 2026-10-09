@@ -12,6 +12,7 @@ cancel out: it would show up as a mismatch.
 	mkfilt DIR      write filter/bit-depth fixtures and their expected pixels
 	mkbad DIR       write hostile files: huge IHDR dimensions, wrong lengths
 	dims FILE       print "W H" straight out of IHDR
+	mksplit DIR F   rewrite F with its IDAT split at awkward boundaries
 	cmp8 A B        compare two PAM files, truncating 16-bit samples to 8
 """
 import os
@@ -197,6 +198,42 @@ def cmd_mkfilt(d):
     print("\n".join(index))
 
 
+def cmd_mksplit(d, src):
+    """Rewrite one PNG with its zlib stream chopped up differently.
+
+    Clause 4.1.3 allows any number of IDAT chunks of any lengths, zero
+    included, and the zlib stream is their concatenation -- so a decoder that
+    treats chunk boundaries as meaningful breaks on files like these. All of
+    these must decode identically to the original, and the all-empty one must
+    be rejected."""
+    os.makedirs(d, exist_ok=True)
+    parts = list(chunks(src))
+    data = b"".join(b for t, b, _ in parts if t == b"IDAT")
+    head = [(t, b) for t, b, _ in parts if t not in (b"IDAT", b"IEND")]
+
+    def write(name, pieces):
+        out = bytearray(SIG)
+        for t, body in head + [(b"IDAT", x) for x in pieces] + [(b"IEND", b"")]:
+            out.extend(struct.pack(">I", len(body)))
+            out.extend(t + body)
+            out.extend(struct.pack(">I", zlib.crc32(t + body) & 0xFFFFFFFF))
+        open("%s/%s.png" % (d, name), "wb").write(bytes(out))
+        print(name)
+
+    write("one", [data])
+    write("perbyte", [data[i:i + 1] for i in range(len(data))])
+    write("empty_first", [b"", data])
+    write("empty_last", [data, b""])
+    write("empty_both", [b"", b"", data, b"", b""])
+    write("empty_between", [x for i in range(len(data))
+                            for x in (data[i:i + 1], b"")])
+    # The 2-byte zlib header straddling a chunk boundary, and then the
+    # Adler-32 straddling another one.
+    write("straddle", [data[:1], data[1:3], data[3:-3], data[-3:-1],
+                       data[-1:]])
+    write("allempty", [b"", b"", b""])
+
+
 def cmd_mkbad(d):
     """Files a decoder has to refuse without crashing. Every one of these has
     a correct signature and correct CRCs, so nothing upstream of the header
@@ -234,5 +271,6 @@ def cmd_mkbad(d):
 
 if __name__ == "__main__":
     {"idat": cmd_idat, "crc": cmd_crc, "mkfilt": cmd_mkfilt,
-     "mkbad": cmd_mkbad, "dims": cmd_dims, "cmp8": cmd_cmp8}[sys.argv[1]](
+     "mkbad": cmd_mkbad, "dims": cmd_dims, "cmp8": cmd_cmp8,
+     "mksplit": cmd_mksplit}[sys.argv[1]](
         *sys.argv[2:])

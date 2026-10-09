@@ -278,7 +278,35 @@ else
 	ok
 fi
 
-# ------------------------------- 6. hostile headers must not be believed
+# ------------------------- 6. IDAT chunk boundaries must mean nothing
+# Clause 4.1.3 allows any number of IDAT chunks of any lengths, zero included,
+# and the zlib stream is their concatenation. A decoder that treats a chunk
+# boundary as a stream boundary -- or that stops at the first empty IDAT --
+# breaks on files like these, and oi9n0g16 in the corpus is the mild version.
+# Every variant below must decode to exactly what the original does, except
+# the all-empty one, which has no zlib stream at all and must be refused.
+for src in basn6a08 basi3p04 basn0g16; do
+	[ -f "$S/$src.png" ] || continue
+	mkdir -p "$D/sp"
+	rm -f "$D/sp"/*.png
+	want=$("$IN" "$S/$src.png" | md5sum)
+	nsp=0
+	for name in $(python3 "$R/t/oracle.py" mksplit "$D/sp" "$S/$src.png"); do
+		if [ "$name" = allempty ]; then
+			"$IN" "$D/sp/$name.png" > "$D/out" 2>/dev/null
+			if [ $? = 1 ] && [ ! -s "$D/out" ]; then nsp=$((nsp+1))
+			else bad "$src/allempty: a PNG with no zlib data was accepted"; fi
+			continue
+		fi
+		got=$("$IN" "$D/sp/$name.png" 2>"$D/err" | md5sum)
+		if [ "$got" = "$want" ]; then nsp=$((nsp+1))
+		else bad "$src/$name: differs from the original ($(cat "$D/err"))"; fi
+	done
+	if [ "$nsp" = 8 ]; then ok
+	else bad "$src: $nsp of 8 IDAT-split variants decoded"; fi
+done
+
+# ------------------------------- 7. hostile headers must not be believed
 # Width x height x bytes-per-pixel is the classic image-decoder overflow, and
 # a crafted IHDR is the whole attack: correct signature, correct CRCs, and
 # dimensions whose product does not fit the machine. These assert the exact
