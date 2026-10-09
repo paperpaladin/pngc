@@ -207,7 +207,78 @@ else
 	bad "gdk-pixbuf-thumbnailer missing: the pixel oracle did not run"
 fi
 
-# ------------------------------- 5. hostile headers must not be believed
+# ------------------- 5. equalities the corpus itself declares, not me
+# The check that catches an Adam7 or filter bug which merely "produces an
+# image". PngSuite's naming convention says these files differ only in how the
+# same pixels were written, so their decoded output has to be identical --
+# byte for byte, not approximately. Nothing here is my opinion about what the
+# image looks like; it is somebody else's statement that two files agree.
+#
+#   basi<X>  vs basn<X>      interlaced vs not, 15 pairs
+#   s##i3p0# vs s##n3p0#     the same, at every size from 1x1 to 40x40
+#   oi1/2/4/9                one IDAT vs two vs four vs nine
+#   z00/03/06/09             zlib level 0 vs 3 vs 6 vs 9
+#   bg*                      a bKGD chunk a non-compositing decoder ignores
+#   ps*, pp0, ch*            sPLT and hIST, likewise ignored
+dec() {
+	"$IN" "$S/$1.png" > "$D/g.pam" 2>"$D/err" || {
+		printf 'unreadable'
+		return
+	}
+	md5sum < "$D/g.pam" | cut -d" " -f1
+}
+same() {
+	first=""
+	for m in "$@"; do
+		[ -f "$S/$m.png" ] || return 0   # subset mode: group not present
+	done
+	for m in "$@"; do
+		h=$(dec "$m")
+		case $h in unreadable) bad "equality: $m does not decode"; return ;; esac
+		if [ -z "$first" ]; then first=$h; firstn=$m
+		elif [ "$h" != "$first" ]; then
+			bad "equality: $m and $firstn must decode identically"
+			return
+		fi
+	done
+	ok
+}
+
+for t in 0g01 0g02 0g04 0g08 0g16 2c08 2c16 3p01 3p02 3p04 3p08 \
+         4a08 4a16 6a08 6a16; do
+	same "basn$t" "basi$t"
+done
+for t in 01i3p01:01n3p01 02i3p01:02n3p01 03i3p01:03n3p01 04i3p01:04n3p01 \
+         05i3p02:05n3p02 06i3p02:06n3p02 07i3p02:07n3p02 08i3p02:08n3p02 \
+         09i3p02:09n3p02 32i3p04:32n3p04 33i3p04:33n3p04 34i3p04:34n3p04 \
+         35i3p04:35n3p04 36i3p04:36n3p04 37i3p04:37n3p04 38i3p04:38n3p04 \
+         39i3p04:39n3p04 40i3p04:40n3p04; do
+	same "s${t%%:*}" "s${t##*:}"
+done
+same oi1n0g16 oi2n0g16 oi4n0g16 oi9n0g16 basn0g16
+same oi1n2c16 oi2n2c16 oi4n2c16 oi9n2c16 basn2c16
+same z00n2c08 z03n2c08 z06n2c08 z09n2c08
+same basi4a08 bgai4a08
+same basn4a08 bgbn4a08
+same basi4a16 bgai4a16
+same basn4a16 bggn4a16
+same basn6a08 bgan6a08 bgwn6a08
+same basn6a16 bgan6a16 bgyn6a16
+same basn0g08 ps1n0g08 ps2n0g08
+same basn2c16 pp0n2c16 ps1n2c16 ps2n2c16
+same basn3p04 ch1n3p04
+same basn3p08 ch2n3p08
+
+# And one inequality, because a comparison harness that silently compares two
+# empty files reports every group above as passing. This is the assertion that
+# proves the ones above are looking at something.
+if [ "$(dec basn0g01)" = "$(dec basn0g02)" ]; then
+	bad "equality harness is vacuous: 1-bit and 2-bit grey came out the same"
+else
+	ok
+fi
+
+# ------------------------------- 6. hostile headers must not be believed
 # Width x height x bytes-per-pixel is the classic image-decoder overflow, and
 # a crafted IHDR is the whole attack: correct signature, correct CRCs, and
 # dimensions whose product does not fit the machine. These assert the exact
