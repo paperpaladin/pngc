@@ -498,6 +498,74 @@ static const char *image_bytes(const Png *im, uint64_t *out) {
 	return NULL;
 }
 
+
+/* ----------------------------------------------------- scanline filters */
+
+/* Clause 6: every scanline carries a filter-type byte, and the predictor works
+ * on bytes a whole pixel apart -- or on adjacent bytes when a pixel is smaller
+ * than a byte, which is what the floor at 1 is for.
+ *
+ *	a = the byte bpp to the left, 0 off the left edge
+ *	b = the byte directly above, 0 on the first row
+ *	c = the byte above and bpp to the left, 0 off either edge
+ */
+static size_t filtbpp(int depth, int chans) {
+	int bits = depth * chans;
+	return bits >= 8 ? (size_t)(bits / 8) : 1;
+}
+
+/* Reverse the filters of one pass -- or of a whole non-interlaced image, which
+ * is the same thing with one pass. src holds rows*(rb+1) bytes, dst receives
+ * rows*rb. Reconstruction reads dst's own previous row, so the loop order is
+ * not an implementation detail. */
+static const char *unfilter(const uint8_t *src, uint8_t *dst, uint32_t rows,
+                            size_t rb, size_t bpp) {
+	for (uint32_t y = 0; y < rows; y++) {
+		int f = *src++;
+		if (f > 4) return "unknown scanline filter type";
+		const uint8_t *prev = y ? dst + (size_t)(y - 1) * rb : NULL;
+		uint8_t *cur = dst + (size_t)y * rb;
+		for (size_t i = 0; i < rb; i++) {
+			unsigned a = i >= bpp ? cur[i - bpp] : 0;
+			unsigned b = prev ? prev[i] : 0;
+			unsigned x = src[i];
+			switch (f) {
+			case 1: x += a; break;
+			case 2: x += b; break;
+			case 3: x += (a + b) >> 1; break;  /* floor, clause 6.4 */
+			default: break;                    /* 0, None */
+			}
+			cur[i] = (uint8_t)x;
+		}
+		src += rb;
+	}
+	return NULL;
+}
+
+/* Unfilter every pass in order, concatenated. For a non-interlaced image that
+ * is one pass and the result is the image; for Adam7 it is seven pass images
+ * that still have to be scattered into place. */
+static const char *unfilter_all(const Png *im, const Buf *raw, Buf *out) {
+	size_t bpp = filtbpp(im->depth, im->chans);
+	const uint8_t *src = raw->p;
+	int lo = im->interlace ? 0 : 6;
+	for (int p = lo; p < 7; p++) {
+		uint32_t pw = im->w, ph = im->h;
+		if (im->interlace) {
+			pw = passdim(im->w, A7X0[p], A7XS[p]);
+			ph = passdim(im->h, A7Y0[p], A7YS[p]);
+		}
+		if (!pw || !ph) continue;
+		size_t rb = (size_t)rowbytes(pw, im->depth, im->chans);
+		bneed(out, rb * (size_t)ph);
+		const char *e = unfilter(src, out->p + out->n, ph, rb, bpp);
+		if (e) return e;
+		out->n += rb * (size_t)ph;
+		src += (rb + 1) * (size_t)ph;
+	}
+	return NULL;
+}
+
 /* -------------------------------------------------------------------- io */
 
 static Buf slurp(const char *path) {
@@ -519,11 +587,12 @@ int main(int argc, char **argv) {
 	crcinit();
 	fixinit();
 	const char *path = NULL;
-	int zdump = 0;
+	int zdump = 0, rdump = 0;
 	for (int a = 1; a < argc; a++) {
 		if (!strcmp(argv[a], "-z")) { zdump = 1; continue; }
+		if (!strcmp(argv[a], "-r")) { rdump = 1; continue; }
 		if (argv[a][0] == '-' && argv[a][1])
-			die("usage: pngc [-z] [file.png]");
+			die("usage: pngc [-z|-r] [file.png]");
 		path = argv[a];
 	}
 
@@ -548,7 +617,20 @@ int main(int argc, char **argv) {
 		free(raw.p);
 		return 1;
 	}
-	if (zdump) {
+	Buf img = {0, 0, 0};
+	if (rdump) {
+		/* Stage two, handed out before any colour conversion: the filters
+		 * reversed and nothing else. t/oracle.py knows what these bytes
+		 * should be because it filtered them forwards. */
+		e = unfilter_all(&im, &raw, &img);
+		if (e) {
+			fprintf(stderr, "pngc: %s\n", e);
+			free(in.p); free(im.idat.p); free(raw.p); free(img.p);
+			return 1;
+		}
+		if (img.n && fwrite(img.p, 1, img.n, stdout) != img.n)
+			die("write error");
+	} else if (zdump) {
 		/* The inflate half, handed out unfiltered so Python's zlib can be
 		 * asked whether it agrees before any pixel code is in the way. */
 		if (raw.n && fwrite(raw.p, 1, raw.n, stdout) != raw.n)
@@ -562,5 +644,6 @@ int main(int argc, char **argv) {
 	free(in.p);
 	free(im.idat.p);
 	free(raw.p);
+	free(img.p);
 	return 0;
 }

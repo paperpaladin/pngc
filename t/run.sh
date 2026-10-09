@@ -127,7 +127,27 @@ for f in "$S"/*.png; do
 done
 [ "$crcbad" = 0 ] && ok
 
-# ------------------------------- 3. hostile headers must not be believed
+# --------------------------- 3. the filters, against a forward implementation
+# oracle.py filters random scanlines FORWARDS; pngc reverses them. A shared
+# misreading of a predictor therefore cannot cancel out -- it shows up as a
+# byte mismatch. Every colour type at 8 and 16 bits, 23x17 so that no row
+# length is a round number, each written once per filter type and once with a
+# different filter on every scanline.
+mkdir -p "$D/filt"
+nfilt=0
+for name in $(python3 "$R/t/oracle.py" mkfilt "$D/filt"); do
+	case $name in f4_*|fmix_*) continue ;; esac   # Paeth: next commit
+	"$IN" -r "$D/filt/$name.png" > "$D/filt/$name.got" 2>"$D/err" || {
+		bad "filter fixture $name: $(cat "$D/err")"
+		continue
+	}
+	if cmp -s "$D/filt/$name.raw" "$D/filt/$name.got"; then nfilt=$((nfilt+1))
+	else bad "filter fixture $name: unfiltered bytes differ"; fi
+done
+if [ "$nfilt" = 32 ]; then ok
+else bad "filter fixtures: $nfilt of 32 matched"; fi
+
+# ------------------------------- 4. hostile headers must not be believed
 # Width x height x bytes-per-pixel is the classic image-decoder overflow, and
 # a crafted IHDR is the whole attack: correct signature, correct CRCs, and
 # dimensions whose product does not fit the machine. These assert the exact
