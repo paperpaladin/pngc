@@ -89,6 +89,48 @@ typedef struct {
 
 static const uint8_t SIG[8] = {137, 80, 78, 71, 13, 10, 26, 10};
 
+/* Samples per pixel in the file, by colour type. -1 marks the three values
+ * the spec leaves undefined; xc1n0g08.png and xc9n2c08.png are exactly those
+ * files and exist to be refused. */
+static const int CHANS[7] = {1, -1, 3, 1, 2, -1, 4};
+
+/* Clause 11.2.2, table: not every depth is legal with every colour type.
+ * Bit k set means depth 1<<k is allowed. */
+static const unsigned DEPTHOK[7] = {
+	0x1f, 0, 0x18, 0x0f, 0x18, 0, 0x18,
+};
+
+static const char *ihdr(const uint8_t *d, uint32_t len, Png *im) {
+	if (len != 13) return "IHDR is not 13 bytes";
+	im->w = be32(d);
+	im->h = be32(d + 4);
+	im->depth = d[8];
+	im->colour = d[9];
+	int comp = d[10], filt = d[11];
+	im->interlace = d[12];
+
+	/* Clause 11.2.2: both are 4-byte unsigned, zero is invalid, and the high
+	 * bit is reserved. Rejecting 2^31..2^32-1 here is also the first half of
+	 * the overflow story -- see rowbytes(). */
+	if (im->w == 0 || im->h == 0) return "zero width or height";
+	if (im->w > 0x7fffffffu || im->h > 0x7fffffffu) return "dimension >= 2^31";
+	if (im->colour > 6 || CHANS[im->colour] < 0)
+		return "undefined colour type";
+	if (im->depth != 1 && im->depth != 2 && im->depth != 4 &&
+	    im->depth != 8 && im->depth != 16)
+		return "bit depth is not 1, 2, 4, 8 or 16";
+	if (!(DEPTHOK[im->colour] & (1u << (im->depth == 16 ? 4 :
+	                                    im->depth == 8 ? 3 :
+	                                    im->depth == 4 ? 2 :
+	                                    im->depth == 2 ? 1 : 0))))
+		return "bit depth is not legal for this colour type";
+	if (comp != 0) return "unknown compression method";
+	if (filt != 0) return "unknown filter method";
+	if (im->interlace > 1) return "unknown interlace method";
+	im->chans = CHANS[im->colour];
+	return NULL;
+}
+
 /* Returns NULL on success, else why this file is not a PNG we will decode.
  * Every rejection has to come from here: a corrupt file must never reach the
  * pixel stages at all. */
@@ -125,6 +167,8 @@ static const char *walk(const uint8_t *p, size_t n, Png *im) {
 			if (seen_ihdr) return "duplicate IHDR";
 			if (i != 8 + 8 + (size_t)len + 4) return "IHDR is not first";
 			seen_ihdr = 1;
+			const char *e = ihdr(d, len, im);
+			if (e) return e;
 		} else if (!seen_ihdr) {
 			return "first chunk is not IHDR";
 		} else if (is_idat) {
@@ -184,7 +228,8 @@ int main(int argc, char **argv) {
 		free(im.idat.p);
 		return 1;
 	}
-	printf("ok %zu IDAT bytes\n", im.idat.n);
+	printf("ok %ux%u depth %d colour %d interlace %d, %zu IDAT bytes\n",
+	       im.w, im.h, im.depth, im.colour, im.interlace, im.idat.n);
 	free(in.p);
 	free(im.idat.p);
 	return 0;

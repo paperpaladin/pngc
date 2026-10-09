@@ -64,7 +64,7 @@ fi
 # reported: a decoder that regresses to 100 has to fail the suite, and a
 # decoder that improves has to come here and say so.
 GOT_VALID=$WANT_VALID
-GOT_CORRUPT=9   # bad bit depth and bad colour type are not caught yet
+GOT_CORRUPT=14  # every x*.png is now caught
 
 # ------------------------------------------------- 1. the corpus, scored
 nvalid=0
