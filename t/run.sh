@@ -63,9 +63,20 @@ fi
 # How many of each this binary is expected to get right. Asserted, not
 # reported: a decoder that regresses to 100 has to fail the suite, and a
 # decoder that improves has to come here and say so.
-GOT_VALID=162   # every valid file in the corpus renders
-GOT_CORRUPT=14  # every x*.png is now caught
-GOT_PIX=162     # libpng agrees on every valid file in the corpus
+#
+# TAKEN FROM THE MODE, not hardcoded. These were literal 162s while
+# WANT_VALID dropped to 40 in subset mode, so the subset branch compared a
+# count that tops out at 40 against 162 and COULD NOT PASS -- two failures,
+# every time, on any clone without the corpus and without the network. The
+# README meanwhile documented that run as "scores 40/40 and 14/14", which
+# is exactly what the suite's own summary line printed while going red.
+#
+# Reproduced before fixing: with .scratch removed and the fetch stubbed
+# out, `decoded 40 valid files, expected 162` and `libpng agreed on 40
+# files, expected 162`.
+GOT_VALID=$WANT_VALID      # every valid file in the running corpus renders
+GOT_CORRUPT=$WANT_CORRUPT  # every x*.png is caught, in both modes
+GOT_PIX=$WANT_VALID        # libpng agrees on every valid file we decoded
 
 # ------------------------------------------------- 1. the corpus, scored
 nvalid=0
@@ -126,17 +137,37 @@ done
 if [ "$zbad" = 0 ] && [ "$zn" = "$WANT_VALID" ]; then ok
 else bad "inflate vs zlib: $zn compared, want $WANT_VALID; $zbad differ"; fi
 
-# Our chunk CRC-32 against zlib.crc32. If these disagreed, the whole
-# accept/reject score above would be measuring the wrong thing.
+# Our chunk CRC-32 against zlib.crc32.
+#
+# This check used to invoke oracle.py and NOTHING ELSE -- it asked Python
+# whether the corpus files had correct CRCs, which is a fact about PngSuite
+# and not about pngc. It would have passed with the CRC code deleted. And
+# the `case` line skipped xcs* and xhd*, which are the only two files in the
+# corpus that have a bad CRC, so the counter it guarded could never be
+# incremented either. Doubly vacuous, while README and PLAN both call
+# zlib.crc32 an oracle that "separately judges our chunk CRC-32".
+#
+# pngc has no CRC-reporting mode, so its CRC behaviour is observable only
+# through accept/reject. The assertion is therefore one-directional and
+# true: every file zlib says carries a bad chunk CRC must be REFUSED. The
+# converse does not hold -- a file with sound CRCs can still be refused for
+# one of the other things x*.png files do wrong -- and claiming it would be
+# the overreach that made the old check meaningless.
 crcbad=0
+ncrc=0
 for f in "$S"/*.png; do
-	case $(basename "$f") in xcs*|xhd*|xcr*|xlf*|xs*) continue ;; esac
-	python3 "$R/t/oracle.py" crc "$f" 2>/dev/null | grep -q BAD && {
+	python3 "$R/t/oracle.py" crc "$f" 2>/dev/null | grep -q BAD || continue
+	ncrc=$((ncrc+1))
+	if "$IN" "$f" >/dev/null 2>&1; then
 		crcbad=$((crcbad+1))
-		bad "zlib.crc32 says $(basename "$f") has a bad CRC but we accepted it"
-	}
+		bad "zlib.crc32 says $(basename "$f") has a bad chunk CRC, and we accepted it"
+	fi
 done
 [ "$crcbad" = 0 ] && ok
+# Without this, the section above passes on any corpus containing no bad
+# CRC at all -- which is the state the old `case` line manufactured.
+if [ "$ncrc" -gt 0 ]; then ok
+else bad "no corpus file has a bad chunk CRC, so the CRC oracle tested nothing"; fi
 
 # --------------------------- 3. the filters, against a forward implementation
 # oracle.py filters random scanlines FORWARDS; pngc reverses them. A shared

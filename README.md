@@ -293,6 +293,15 @@ Plainly, because a README that only lists successes is not finished.
   `subset` instead of `full`. Which mode ran is always printed, so a passing
   run cannot quietly have been forty files.
 
+  That paragraph was false until the floors stopped being typed in.
+  `GOT_VALID` and `GOT_PIX` were literal `162`s while the subset's own
+  expectation dropped to 40, so the subset branch compared a count that
+  tops out at 40 against 162 and **could not pass** -- two failures on any
+  clone without the corpus and without the network, while the summary line
+  printed the `40/40` promised above. Reproduced by removing `.scratch/`
+  and stubbing out the fetch, then fixed by taking the floors from the mode
+  that is running.
+
 ## Deliberate corners
 
 Each marked in the source with a `shortcut:` comment naming its ceiling.
