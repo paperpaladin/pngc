@@ -15,14 +15,14 @@ gcc -std=c11 -O2 -Wall -Wextra -Wpedantic -ffile-prefix-map=/home/x/projects/png
 t/run.sh ./pngc
 
 PngSuite (full): 162/162 valid decoded, 14/14 corrupt rejected
-72 passed, 0 failed
+73 passed, 0 failed
 ```
 
 ```
 $ make test-asan
 
 PngSuite (full): 162/162 valid decoded, 14/14 corrupt rejected
-72 passed, 0 failed
+73 passed, 0 failed
 ```
 
 18 seconds, 31 under the sanitizers.
