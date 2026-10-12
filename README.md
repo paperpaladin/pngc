@@ -15,14 +15,14 @@ gcc -std=c11 -O2 -Wall -Wextra -Wpedantic -ffile-prefix-map=/home/x/projects/png
 t/run.sh ./pngc
 
 PngSuite (full): 162/162 valid decoded, 14/14 corrupt rejected
-73 passed, 0 failed
+74 passed, 0 failed
 ```
 
 ```
 $ make test-asan
 
 PngSuite (full): 162/162 valid decoded, 14/14 corrupt rejected
-73 passed, 0 failed
+74 passed, 0 failed
 ```
 
 18 seconds, 31 under the sanitizers.
@@ -320,7 +320,7 @@ Each marked in the source with a `shortcut:` comment naming its ceiling.
 pngc.c        908 lines: chunk walker, CRC-32, IHDR, vendored DEFLATE +
               zlib framing, size guards, five filters, Adam7, RGBA, PAM
 Makefile      build, test, test-asan, clean
-t/run.sh      the suite: 72 checks, prints the PngSuite score
+t/run.sh      the suite: 74 checks, prints the PngSuite score
 t/oracle.py   zlib inflate, forward filters, and every fixture generator
 t/png/        54 PngSuite files for offline runs, with PROVENANCE
 ```

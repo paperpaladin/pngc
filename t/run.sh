@@ -74,9 +74,15 @@ fi
 # Reproduced before fixing: with .scratch removed and the fetch stubbed
 # out, `decoded 40 valid files, expected 162` and `libpng agreed on 40
 # files, expected 162`.
-GOT_VALID=$WANT_VALID      # every valid file in the running corpus renders
-GOT_CORRUPT=$WANT_CORRUPT  # every x*.png is caught, in both modes
-GOT_PIX=$WANT_VALID        # libpng agrees on every valid file we decoded
+# There were three GOT_* variables here -- GOT_VALID, GOT_CORRUPT, GOT_PIX --
+# each assigned from its WANT_* counterpart and never reassigned. They were a
+# "how much is implemented yet" allowance from when the decoder was partial,
+# and they made two branches unreachable: `elif [ "$GOT_VALID" = "$WANT_VALID" ]`
+# is unconditionally true, so the `note: not decoded yet` arms below it could
+# never run, and the comment claiming the count was the real assertion
+# described a mode the file could no longer enter. The decoder decodes all of
+# them now, so the allowance is gone and a rejected valid file is a failure,
+# named.
 
 # ------------------------------------------------- 1. the corpus, scored
 nvalid=0
@@ -97,22 +103,17 @@ for f in "$S"/*.png; do
 		;;
 	*)	if [ "$rc" = 0 ]; then
 			nvalid=$((nvalid+1))
-		elif [ "$GOT_VALID" = "$WANT_VALID" ]; then
-			bad "$b: valid file rejected ($(cat "$D/err"))"
 		else
-			# Still building up. The count below is the assertion; naming
-			# every not-yet-implemented file as a failure would bury the
-			# ones that are real.
-			printf 'note: %s not decoded yet (%s)\n' "$b" "$(cat "$D/err")"
+			bad "$b: valid file rejected ($(cat "$D/err"))"
 		fi
 		;;
 	esac
 done
 
-if [ "$nvalid" = "$GOT_VALID" ]; then ok
-else bad "decoded $nvalid valid files, expected $GOT_VALID"; fi
-if [ "$ncorrupt" = "$GOT_CORRUPT" ]; then ok
-else bad "rejected $ncorrupt corrupt files, expected $GOT_CORRUPT"; fi
+if [ "$nvalid" = "$WANT_VALID" ]; then ok
+else bad "decoded $nvalid valid files, expected $WANT_VALID"; fi
+if [ "$ncorrupt" = "$WANT_CORRUPT" ]; then ok
+else bad "rejected $ncorrupt corrupt files, expected $WANT_CORRUPT"; fi
 
 # ------------------------ 2. Python's zlib agrees with our inflate, exactly
 # Splits the decoder in half. If this passes, every later failure is in the
@@ -133,7 +134,7 @@ for f in "$S"/*.png; do
 	}
 done
 # Every valid file, regardless of how much of the pixel pipeline exists yet:
-# -z stops before the filters, so this count is WANT_VALID and not GOT_VALID.
+# -z stops before the filters, so this count is WANT_VALID.
 if [ "$zbad" = 0 ] && [ "$zn" = "$WANT_VALID" ]; then ok
 else bad "inflate vs zlib: $zn compared, want $WANT_VALID; $zbad differ"; fi
 
@@ -250,14 +251,12 @@ if command -v gdk-pixbuf-thumbnailer > /dev/null; then
 		msg=$(python3 "$R/t/oracle.py" cmp8 "$D/ours.pam" "$D/theirs.pam")
 		if [ $? = 0 ]; then
 			npix=$((npix+1))
-		elif [ "$GOT_PIX" = "$WANT_VALID" ]; then
-			bad "$b: disagrees with libpng: $msg"
 		else
-			printf 'note: %s disagrees with libpng: %s\n' "$b" "$msg"
+			bad "$b: disagrees with libpng: $msg"
 		fi
 	done
-	if [ "$npix" = "$GOT_PIX" ]; then ok
-	else bad "libpng agreed on $npix files, expected $GOT_PIX"; fi
+	if [ "$npix" = "$WANT_VALID" ]; then ok
+	else bad "libpng agreed on $npix files, expected $WANT_VALID"; fi
 else
 	bad "gdk-pixbuf-thumbnailer missing: the pixel oracle did not run"
 fi
@@ -445,8 +444,19 @@ else bad "chunk rules: $nseq of $nseqtry"; fi
 # rejection, not merely "exit 1", because the wrong guard firing would hide
 # the fact that the right one is missing.
 mkdir -p "$D/bad"
-python3 "$R/t/oracle.py" mkbad "$D/bad" > "$D/badlist"
+# The exit status of mkbad is checked, and the number of cases is pinned.
+# This is the one section in this file with no count assertion -- every other
+# has `WANT_VALID`, `= 50`, `= 48`, `= 8`, `-gt 300`, `-ge 29`. Without one, a
+# mkbad that emitted nothing (or crashed, since the redirect hid its status)
+# left an empty badlist, ran zero assertions and exited 0: the six crafted
+# IHDR rejections that README.md spends a whole section arguing are
+# load-bearing would simply not have happened.
+if ! python3 "$R/t/oracle.py" mkbad "$D/bad" > "$D/badlist"; then
+	bad "oracle.py mkbad failed, so the hostile-header cases did not run"
+fi
+nbad=0
 while read -r name msg; do
+	nbad=$((nbad + 1))
 	"$IN" "$D/bad/$name.png" > "$D/out" 2>"$D/err"
 	rc=$?
 	if [ "$rc" != 1 ]; then
@@ -459,6 +469,11 @@ while read -r name msg; do
 		ok
 	fi
 done < "$D/badlist"
+if [ "$nbad" -eq 6 ]; then
+	ok
+else
+	bad "hostile headers: $nbad cases, expected 6"
+fi
 
 # ----------------------------------------- 10. the interface it presents
 # Cheap, and each one has been wrong in some program at some point.
