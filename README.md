@@ -157,7 +157,7 @@ test catches.
   clause 4 and clause 11 rules the corpus has no file for, plus 384 fuzz
   inputs. See below.
 
-## The integer overflow, which is the point of the whole guard section
+## The integer overflow, and the point of the whole guard section
 
 `width * height * bytes_per_pixel` is the oldest bug in this genre, and PNG
 hands the attacker both factors in a 13-byte header that is otherwise

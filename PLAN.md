@@ -60,7 +60,7 @@ Ranked by how little control I have over them, most independent first:
 
 - Encoding. There is no PNG writer here and there will not be one.
 - APNG (`acTL`/`fcTL`/`fdAT`). Those are ancillary chunks, so an APNG decodes
-  as its default still image, which is what a PNG decoder should do.
+  as its default still image, as a PNG decoder should.
 - Colour management. `gAMA`, `cHRM`, `sRGB`, `iCCP`, `sBIT` are skipped, so
   samples come out as the file stores them. Displaying `g*.png` or `cs*.png`
   *correctly* needs work this does not do.
@@ -145,7 +145,7 @@ Ranked by how little control I have over them, most independent first:
 ### Milestone 2: stop holding everything in memory
 
 - [ ] 21 inflate and unfilter one scanline at a time through a 32K window
-      why: four whole-image buffers are live at once, which is what the 1 GiB
+      why: four whole-image buffers are live at once, and that is what the 1 GiB
       ceiling is standing in for. A 2 GiB PNG is legal and does not work.
 - [ ] 22 write the PAM as rows are finished, not at the end
       why: halves the peak and is the only honest way to decode something
