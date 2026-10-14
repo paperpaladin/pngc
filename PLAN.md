@@ -12,7 +12,7 @@ zlib, no libpng, no third-party code except the DEFLATE decoder vendored from
 the sibling `../inflate`, with attribution.
 
 `-z` writes the inflated IDAT stream and `-r` the unfiltered scanline bytes;
-both exist so the decoder can be oracled in stages rather than only end to
+both exist so the decoder can be oracled in stages, not only end to
 end.
 
 ## Hard invariant
@@ -25,34 +25,34 @@ Two halves, and the second is not softer than the first. This is a parser for
 bytes somebody else chose, with the image dimensions among them, so a
 malformed input that reads out of bounds is a failed project and not a bug to
 triage. `exit 1` with a message on stderr and nothing on stdout is the only
-acceptable response to garbage -- not a partial image, and not a crash, which
+acceptable response to garbage: not a partial image, and not a crash, which
 would also be a nonzero exit.
 
 ## Oracle
 
 Ranked by how little control I have over them, most independent first:
 
-1. **libpng**, reached through `gdk-pixbuf-thumbnailer`. Asked for a thumbnail
+1. libpng, reached through `gdk-pixbuf-thumbnailer`. Asked for a thumbnail
    at the image's own longest side it returns the same pixels as a plain 8-bit
    non-interlaced PNG, and that is compared against our decode for all 162
    valid files. Other people's code, other people's reading of the spec. Where
    it disagrees with this code, this code is wrong.
-2. **PngSuite's naming convention.** Which of 176 files are valid and which
+2. PngSuite's naming convention. Which of 176 files are valid and which
    are deliberately corrupt is Willem van Schaik's decision, and the corpus
-   also declares which files must decode *identically* to each other --
+   also declares which files must decode *identically* to each other,
    interlaced against not, one IDAT against nine, zlib level 0 against 9,
    bKGD/sPLT/hIST added to a file we already have.
-3. **Python's `zlib`.** Inflates the concatenated IDAT independently so the
+3. Python's `zlib`. Inflates the concatenated IDAT independently so the
    DEFLATE half can be compared byte for byte before filtering enters the
    picture, and `zlib.crc32` judges our chunk CRC-32.
-4. **`t/oracle.py`'s forward filters.** It *encodes* fixtures, running the
+4. `t/oracle.py`'s forward filters. It *encodes* fixtures, running the
    predictors in the opposite direction, so a shared misreading cannot cancel
    out across an encode/decode pair written as inverses.
-5. **AddressSanitizer, UBSan, valgrind.** Independent of my intent but not of
+5. AddressSanitizer, UBSan, valgrind. Independent of my intent but not of
    my inputs; they only see the paths something else drove them down.
-6. **Mutation testing.** Delete a check or flip a constant, confirm the suite
-   goes red. Judges the tests rather than the code.
-7. **Our own round trip** -- the matched-pair equalities where both sides are
+6. Mutation testing. Delete a check or flip a constant, confirm the suite
+   goes red. Judges the tests, not the code.
+7. Our own round trip: the matched-pair equalities where both sides are
    ours. Weakest, kept because it catches regressions, never used to establish
    correctness.
 
@@ -97,7 +97,7 @@ Ranked by how little control I have over them, most independent first:
       an independent decoder can contradict.
 - [x] 08 palette images: PLTE, bounds, 162 of 162 decoding
       why: colour type 3 has its rules outside IHDR, and an out-of-range
-      index is a corrupt file rather than a licence to read past an array.
+      index is a corrupt file, not a licence to read past an array.
 - [x] 09 tRNS in all three shapes
       why: three different chunks with one name, and a palette tRNS shorter
       than the palette is a real file in the corpus.
@@ -122,9 +122,9 @@ Ranked by how little control I have over them, most independent first:
       why: gdk-pixbuf returns 8-bit pixels, so zeroing every low byte left
       all 71 checks green. Found by mutation, not by reading.
 - [x] 17 docs: README, PLAN, LICENSE
-      why: last, so they describe what was built rather than what was hoped.
+      why: last, so they describe what was built, not what was hoped.
 
-### Milestone 1 -- make the weak spots in the suite actually strong
+### Milestone 1: make the weak spots in the suite actually strong
 
 - [ ] 18 run the mutation sweep from `make` instead of from my shell history
       why: it found the 16-bit low-byte hole and three Paeth variants, and it
@@ -135,24 +135,24 @@ Ranked by how little control I have over them, most independent first:
       why: libpng's agreement on a 16-bit file is agreement about high bytes.
       Item 16 covers the low bytes with Python-generated fixtures, which is
       our own plumbing checked against our own expansion rule; a tool that
-      emits 16-bit output -- `pnmtopng`, ImageMagick -- would be a real
+      emits 16-bit output (`pnmtopng`, ImageMagick) would be a real
       second opinion on the 24 16-bit files in the corpus.
 - [ ] 20 assert stderr content for the corpus rejections too
       why: the crafted files assert their exact rejection reason and the 14
       x*.png do not, so a guard firing for the wrong reason on a real corrupt
       file would pass unnoticed.
 
-### Milestone 2 -- stop holding everything in memory
+### Milestone 2: stop holding everything in memory
 
 - [ ] 21 inflate and unfilter one scanline at a time through a 32K window
       why: four whole-image buffers are live at once, which is what the 1 GiB
       ceiling is standing in for. A 2 GiB PNG is legal and does not work.
-- [ ] 22 write the PAM as rows are finished rather than at the end
+- [ ] 22 write the PAM as rows are finished, not at the end
       why: halves the peak and is the only honest way to decode something
       larger than RAM. Non-interlaced only; Adam7 cannot stream by
       construction.
 
-### Milestone 3 -- the chunks currently skipped
+### Milestone 3: the chunks currently skipped
 
 - [ ] 23 validate ancillary chunk positions and lengths
       why: `gAMA` after IDAT is accepted today. libpng does not reject it
