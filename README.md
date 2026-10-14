@@ -135,7 +135,7 @@ test catches.
 - Average floors. `(a+b)>>1`, no rounding term. `(a+b+1)>>1` fails 8.
 - Bit depths below 8. Packed most-significant-bits first, so the last byte
   of a scanline is partially unused, and those spare low bits are not
-  required to be zero, so they are masked, not trusted. The predictor
+  required to be zero, so they are masked and never trusted. The predictor
   steps by bytes-per-pixel floored at *one*, not at a pixel, so at depth 1
   through 4 the left neighbour is the adjacent byte.
 - 16-bit samples are big-endian, clause 7.1, whatever the machine is.
@@ -276,7 +276,7 @@ Plainly, because a README that only lists successes is not finished.
 - The 14 corpus rejections do not assert their reason. The crafted files
   do; these only assert exit 1 and empty stdout. A guard firing for the wrong
   reason on a real corrupt file would pass unnoticed.
-- The mutation sweep lives in my shell history, not in `make`. It found
+- That mutation sweep lives in my shell history and never made it into `make`. It found
   the 16-bit hole and three Paeth variants. A suite only occasionally checked
   for being *able* to fail will eventually stop being able to.
 - One Paeth mutant survives and should not be chased. Swapping the first
@@ -285,8 +285,7 @@ Plainly, because a README that only lists successes is not finished.
   `|b-c| == |a-c|`, so either `a == b`, and the branches return the same
   byte, or `a + b == 2c`, in which case `p == c` and `pc == 0`, and both
   orderings fall through to `c` unless `a == b` anyway. Brute-forced over all
-  16777216 triples: zero differ. The spec's order is kept because it is the
-  spec's order, not because a test needs it.
+  16777216 triples: zero differ. The spec's order is kept because it is the spec's order, and no test needs it.
 - The corpus is scored in two modes. `t/run.sh` fetches PngSuite into
   `.scratch/` and verifies its SHA-256. With no network it falls back to the
   54-file subset committed under `t/png/`, scores 40/40 and 14/14, and prints
