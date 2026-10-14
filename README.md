@@ -75,7 +75,7 @@ The simple path that comparison routes through is not taken on trust. It is
 the same path the forward-filter fixtures pin byte for byte, and its inflate
 output is already checked against Python's zlib.
 
-Two things libpng settled that would otherwise have been my guesses: its
+Two things libpng settled that would otherwise have been my guesses. Its
 16-to-8 reduction here is `png_set_strip_16`, the high byte with no rounding
 (rounding instead disagrees on every one of the 24 16-bit files), and the
 sub-byte scaling is `v * 255 / max`, so a 4-bit `0xf` becomes `0xff` and not
@@ -198,7 +198,7 @@ against `/usr/bin/gzip` at every compression level, over eleven fixtures, plus
 nine streams that each violate exactly one rule and 300 mutated ones.
 
 So it is vendored, not rewritten. Writing a second DEFLATE here would have
-duplicated that project's scope and, worse, thrown away its oracle: a fresh
+duplicated that project's scope and, worse, thrown away its oracle. A fresh
 implementation in this file would be checked only by PNG files, which exercise
 a narrow slice of DEFLATE and cannot be varied at will. The decoder half
 travels verbatim, bit reader, canonical Huffman, the RFC 1951 tables,
@@ -228,7 +228,7 @@ Plainly, because a README that only lists successes is not finished.
   depths, and all of them decode to the right samples and the wrong picture.
   This is the gap most likely to matter to a real user.
 - No compositing. `bKGD` is ignored and alpha is handed out,
-  not applied. That is deliberate and is a tested claim: the `bg*` files must
+  not applied. That is deliberate and is a tested claim. The `bg*` files must
   decode identically to the versions without a background, but a viewer
   wanting a flat image has to do the blend itself.
 - APNG is not animated. `acTL`, `fcTL` and `fdAT` are ancillary, so an
