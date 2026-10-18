@@ -126,11 +126,28 @@ Ranked by how little control I have over them, most independent first:
 
 ### Milestone 1: make the weak spots in the suite actually strong
 
-- [ ] 18 run the mutation sweep from `make` instead of from my shell history
+- [x] 18 run the mutation sweep from `make` instead of from my shell history
       why: it found the 16-bit low-byte hole and three Paeth variants, and it
       currently exists only as commands I typed. A suite that is only
       occasionally checked for being able to fail will eventually stop being
       able to.
+      done: `make mutants`, which is `t/mutants.sh`: ten defects planted
+      into a copy of pngc.c, each built and run against the real suite, so a
+      mutant is caught by whatever would catch it in ordinary use rather
+      than by an assertion written to catch that mutant.
+      Nine must die and one must survive. The survivor is the documented
+      equivalent Paeth tie-break, and an expected survivor that starts
+      dying is as interesting as an expected casualty that starts living,
+      so both directions fail the sweep. A sed that matches nothing is
+      also a failure, which is the way a mutation table rots: the code
+      moves, the expression stops matching, and the sweep reports a pass
+      for a defect it never planted.
+      Not in `make test`: a build and a full suite run per mutant is about
+      four minutes, the same reason `test-asan` is separate.
+      Coverage beyond the Paeth variants that prompted the item: the
+      16-bit low byte and byte order, the chunk CRC, the average filter's
+      rounding direction, the up filter's row, and the sub-byte sample
+      mask.
 - [ ] 19 an independent 16-bit pixel oracle
       why: libpng's agreement on a 16-bit file is agreement about high bytes.
       Item 16 covers the low bytes with Python-generated fixtures, which is

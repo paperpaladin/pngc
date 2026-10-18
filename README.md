@@ -276,9 +276,21 @@ Plainly, because a README that only lists successes is not finished.
 - The 14 corpus rejections do not assert their reason. The crafted files
   do; these only assert exit 1 and empty stdout. A guard firing for the wrong
   reason on a real corrupt file would pass unnoticed.
-- That mutation sweep lives in my shell history and never made it into `make`. It found
-  the 16-bit hole and three Paeth variants. A suite only occasionally checked
-  for being *able* to fail will eventually stop being able to.
+- The mutation sweep is `make mutants` now, not something I typed. Ten
+  defects, each planted into a copy of `pngc.c`, built, and run against
+  the real suite, so a mutant is caught by whatever would catch it in
+  ordinary use rather than by an assertion written for it. Nine must die
+  and one must survive; an expected survivor that starts dying is as
+  interesting as an expected casualty that starts living, so both
+  directions fail the sweep. A sed expression that matches nothing is
+  also a failure, which is how a mutation table rots: the code moves,
+  the pattern stops matching, and the sweep reports a pass for a defect
+  it never planted.
+
+  It is not part of `make test`, for the reason `test-asan` is not: a
+  build and a full suite run per mutant is about four minutes. It is the
+  thing to run when the suite changes, because what it measures is
+  whether the suite can still fail.
 - One Paeth mutant survives and should not be chased. Swapping the first
   two branches to prefer `b` on a `pa == pb` tie leaves the suite green. That
   looks exactly like a coverage gap and is not one: `pa == pb` means

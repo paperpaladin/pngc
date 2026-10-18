@@ -9,6 +9,15 @@ pngc: pngc.c
 test: pngc
 	t/run.sh ./pngc
 
+# The mutation sweep. Not part of `make test`, for the same reason
+# test-asan is not: it builds and runs the whole suite once per
+# mutant, which is about four minutes. It is the thing to run when
+# the suite changes, because what it checks is whether the suite can
+# still fail, and that is exactly the property that degrades without
+# anyone noticing.
+mutants: pngc
+	t/mutants.sh
+
 # This decoder parses attacker-chosen binary with attacker-chosen dimensions,
 # which is the exact shape of problem that produces image-decoder CVEs, so the
 # whole suite has to pass again with the sanitizers on.
@@ -28,4 +37,4 @@ clean:
 	rm -f pngc pngc-asan
 	rm -rf t/tmp
 
-.PHONY: test test-asan clean
+.PHONY: test mutants test-asan clean
